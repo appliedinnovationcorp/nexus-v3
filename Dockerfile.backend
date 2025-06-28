@@ -1,0 +1,17 @@
+FROM node:20-alpine
+WORKDIR /v3
+COPY package.json pnpm-lock.yaml ./
+COPY apps/backend ./apps/backend
+
+# Copy all package.json files
+COPY apps/frontend/*/package.json ./apps/frontend/*/
+COPY packages/*/package.json ./packages/*/
+COPY docs/*/package.json ./docs/*/
+COPY infrastructure/*/* ./infrastructure/*/
+COPY scripts/* ./scripts/
+COPY tools/*/package.json ./tools/*/
+COPY types/*/package.json ./types/*/
+
+RUN npm install -g pnpm && pnpm install
+WORKDIR /v3/apps/backend
+CMD ["pnpm", "start:dev"]

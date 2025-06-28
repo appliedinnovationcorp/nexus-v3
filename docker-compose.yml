@@ -1,8 +1,8 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15
+  db:
+    image: postgres:17
     environment:
       POSTGRES_DB: nexus_db
       POSTGRES_USER: postgres
@@ -14,7 +14,7 @@ services:
       - ./packages/database/src/migrations:/docker-entrypoint-initdb.d
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     ports:
       - "6379:6379"
     volumes:
@@ -37,6 +37,35 @@ services:
     ports:
       - "1025:1025"
       - "8025:8025"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/backend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://user:password@db:5432/ai_consulting
+    depends_on:
+      - db
 
 volumes:
   postgres_data:
