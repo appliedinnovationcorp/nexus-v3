@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Nexus Workspace Setup Script
-echo "🚀 Setting up Nexus Workspace..."
+# aic Workspace Setup Script
+echo "🚀 Setting up aic Workspace..."
 
 # Check if pnpm is installed
 if ! command -v pnpm &> /dev/null; then

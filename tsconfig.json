@@ -1,9 +1,9 @@
 {
-  "extends": "@nexus/tsconfig/base.json",
+  "extends": "@aic/tsconfig/base.json",
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@nexus/*": ["./packages/*/src"],
+      "@aic/*": ["./packages/*/src"],
       "@/*": ["./src/*"]
     }
   },

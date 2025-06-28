@@ -1,7 +1,7 @@
 {
-  "name": "@nexus/auth",
+  "name": "@aic/auth",
   "version": "0.1.0",
-  "description": "Authentication utilities and components for Nexus Workspace",
+  "description": "Authentication utilities and components for aic Workspace",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -20,8 +20,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@nexus/types": "workspace:*",
-    "@nexus/utils": "workspace:*",
+    "@aic/types": "workspace:*",
+    "@aic/utils": "workspace:*",
     "next-auth": "^4.24.0",
     "jsonwebtoken": "^9.0.0",
     "bcryptjs": "^2.4.0"
@@ -29,14 +29,14 @@
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.0",
     "@types/bcryptjs": "^2.4.0",
-    "@nexus/eslint-config": "workspace:*",
-    "@nexus/prettier-config": "workspace:*",
-    "@nexus/tsconfig": "workspace:*",
+    "@aic/eslint-config": "workspace:*",
+    "@aic/prettier-config": "workspace:*",
+    "@aic/tsconfig": "workspace:*",
     "typescript": "^5.2.2",
     "jest": "^29.0.0",
     "@types/jest": "^29.0.0"
   },
-  "keywords": ["auth", "authentication", "utilities", "nexus"],
-  "author": "Nexus Team",
+  "keywords": ["auth", "authentication", "utilities", "aic"],
+  "author": "aic Team",
   "license": "MIT"
 }

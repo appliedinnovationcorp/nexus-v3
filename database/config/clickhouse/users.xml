@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <users>
+        <default>
+            <password></password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <databases>
+                <database>default</database>
+            </databases>
+        </default>
+
+        <aic_analytics>
+            <password>analytics_pass</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <databases>
+                <database>aic_analytics</database>
+                <database>default</database>
+            </databases>
+            <access_management>1</access_management>
+        </aic_analytics>
+
+        <readonly_user>
+            <password>readonly_pass</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>readonly</profile>
+            <quota>default</quota>
+            <databases>
+                <database>aic_analytics</database>
+            </databases>
+        </readonly_user>
+    </users>
+
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+    </quotas>
+</clickhouse>

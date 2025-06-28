@@ -1,0 +1,240 @@
+version: '3.8'
+
+services:
+  # Keycloak Identity Provider
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_secure_pass
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    networks:
+      - auth-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:22.0
+    container_name: keycloak
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_secure_pass
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8080
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_LOG_LEVEL: info
+      KC_METRICS_ENABLED: true
+      KC_HEALTH_ENABLED: true
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin_secure_pass
+      KC_HTTP_ENABLED: true
+      KC_HOSTNAME_STRICT_BACKCHANNEL: false
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./config/keycloak/themes:/opt/keycloak/themes
+      - ./config/keycloak/providers:/opt/keycloak/providers
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    networks:
+      - auth-network
+    command: start-dev
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis for Session Storage
+  redis-auth:
+    image: redis:7-alpine
+    container_name: redis-auth
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-auth-data:/data
+      - ./config/redis/redis-auth.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - auth-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL for Auth Data
+  postgres-auth:
+    image: postgres:15-alpine
+    container_name: postgres-auth
+    environment:
+      POSTGRES_DB: auth_system
+      POSTGRES_USER: auth_admin
+      POSTGRES_PASSWORD: auth_secure_pass
+    ports:
+      - "5437:5432"
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+      - ./scripts/init-auth-db.sql:/docker-entrypoint-initdb.d/init-auth-db.sql
+    networks:
+      - auth-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_admin -d auth_system"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://auth_admin:auth_secure_pass@postgres-auth:5432/auth_system
+      REDIS_URL: redis://redis-auth:6379
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: aic-realm
+      KEYCLOAK_CLIENT_ID: aic-client
+      KEYCLOAK_CLIENT_SECRET: your-client-secret
+      JWT_SECRET: your-super-secure-jwt-secret-key-here
+      JWT_REFRESH_SECRET: your-super-secure-refresh-secret-key-here
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_USER: ""
+      SMTP_PASS: ""
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX_REQUESTS: 100
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./services/auth-service:/app
+      - /app/node_modules
+    depends_on:
+      - keycloak
+      - redis-auth
+      - postgres-auth
+    networks:
+      - auth-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # SMTP Server for Testing (MailHog)
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - auth-network
+
+  # Nginx Reverse Proxy
+  nginx-auth:
+    image: nginx:alpine
+    container_name: nginx-auth
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - keycloak
+      - auth-service
+    networks:
+      - auth-network
+
+  # Prometheus for Metrics
+  prometheus-auth:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus-auth
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./config/prometheus/prometheus-auth.yml:/etc/prometheus/prometheus.yml
+      - prometheus-auth-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - auth-network
+
+  # Grafana for Monitoring
+  grafana-auth:
+    image: grafana/grafana:10.1.0
+    container_name: grafana-auth
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana-auth-data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - auth-network
+
+  # Jaeger for Distributed Tracing
+  jaeger-auth:
+    image: jaegertracing/all-in-one:1.49
+    container_name: jaeger-auth
+    ports:
+      - "16687:16686"
+      - "14269:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - auth-network
+
+  # Vault for Secrets Management (Optional)
+  vault:
+    image: vault:1.15
+    container_name: vault
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: myroot
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault-data:/vault/data
+      - ./config/vault:/vault/config
+    networks:
+      - auth-network
+    profiles:
+      - vault
+
+volumes:
+  keycloak-db-data:
+  redis-auth-data:
+  postgres-auth-data:
+  prometheus-auth-data:
+  grafana-auth-data:
+  vault-data:
+
+networks:
+  auth-network:
+    driver: bridge

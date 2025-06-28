@@ -1,0 +1,162 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: user-service
+    url: http://user-domain:3001
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 100
+          hour: 1000
+          policy: local
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:user-domain"
+              - "X-Request-ID:$(uuid)"
+      - name: response-transformer
+        config:
+          add:
+            headers:
+              - "X-Response-Time:$(upstream_response_time)"
+      - name: prometheus
+        config:
+          per_consumer: true
+    routes:
+      - name: user-routes
+        paths:
+          - /api/v1/users
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        strip_path: false
+
+  - name: order-service
+    url: http://order-domain:3002
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 200
+          hour: 2000
+          policy: local
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:order-domain"
+              - "X-Request-ID:$(uuid)"
+      - name: response-transformer
+        config:
+          add:
+            headers:
+              - "X-Response-Time:$(upstream_response_time)"
+      - name: prometheus
+        config:
+          per_consumer: true
+    routes:
+      - name: order-routes
+        paths:
+          - /api/v1/orders
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        strip_path: false
+
+  - name: inventory-service
+    url: http://inventory-domain:3003
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 150
+          hour: 1500
+          policy: local
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:inventory-domain"
+              - "X-Request-ID:$(uuid)"
+      - name: response-transformer
+        config:
+          add:
+            headers:
+              - "X-Response-Time:$(upstream_response_time)"
+      - name: prometheus
+        config:
+          per_consumer: true
+    routes:
+      - name: inventory-routes
+        paths:
+          - /api/v1/inventory
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        strip_path: false
+
+# Global plugins
+plugins:
+  - name: cors
+    config:
+      origins:
+        - "*"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - X-Auth-Token
+        - Authorization
+      exposed_headers:
+        - X-Auth-Token
+      credentials: true
+      max_age: 3600
+
+  - name: request-id
+    config:
+      header_name: X-Request-ID
+      echo_downstream: true
+
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      echo_downstream: true
+
+# Consumers (API clients)
+consumers:
+  - username: frontend-app
+    custom_id: frontend-app-001
+    plugins:
+      - name: key-auth
+        config:
+          key: frontend-api-key-12345
+      - name: rate-limiting
+        config:
+          minute: 1000
+          hour: 10000
+
+  - username: mobile-app
+    custom_id: mobile-app-001
+    plugins:
+      - name: key-auth
+        config:
+          key: mobile-api-key-67890
+      - name: rate-limiting
+        config:
+          minute: 500
+          hour: 5000

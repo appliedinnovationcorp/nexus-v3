@@ -21,7 +21,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build the web application
-RUN pnpm build --filter=@nexus/web
+RUN pnpm build --filter=@aic/web
 
 # Production stage
 FROM node:18-alpine AS production
@@ -39,4 +39,4 @@ COPY --from=base /app/package.json ./
 
 EXPOSE 3000
 
-CMD ["pnpm", "--filter=@nexus/web", "start"]
+CMD ["pnpm", "--filter=@aic/web", "start"]

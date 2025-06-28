@@ -1,4 +1,4 @@
-# Nexus V3 Workspace
+# aic V3 Workspace
 
 A comprehensive full-stack monorepo built with modern tools and best practices.
 

@@ -1,5 +1,5 @@
 {
-  "name": "@nexus/types",
+  "name": "@aic/types",
   "version": "0.1.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -21,9 +21,9 @@
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
-    "@nexus/eslint-config": "workspace:*",
-    "@nexus/prettier-config": "workspace:*",
-    "@nexus/tsconfig": "workspace:*",
+    "@aic/eslint-config": "workspace:*",
+    "@aic/prettier-config": "workspace:*",
+    "@aic/tsconfig": "workspace:*",
     "typescript": "^5.2.2",
     "tsup": "^7.2.0"
   }

@@ -1,5 +1,5 @@
 {
-  "extends": "@nexus/tsconfig/react.json",
+  "extends": "@aic/tsconfig/react.json",
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "./dist",
@@ -9,7 +9,7 @@
     "noEmit": false,
     "composite": true,
     "paths": {
-      "@nexus/*": ["../*/src"]
+      "@aic/*": ["../*/src"]
     }
   },
   "include": [

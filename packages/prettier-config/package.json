@@ -1,7 +1,7 @@
 {
-  "name": "@nexus/prettier-config",
+  "name": "@aic/prettier-config",
   "version": "0.1.0",
-  "description": "Prettier configuration for Nexus Workspace",
+  "description": "Prettier configuration for aic Workspace",
   "main": "./index.js",
   "files": [
     "index.js"
@@ -9,8 +9,8 @@
   "scripts": {
     "test": "echo \"No tests for config package\""
   },
-  "keywords": ["prettier", "config", "nexus"],
-  "author": "Nexus Team",
+  "keywords": ["prettier", "config", "aic"],
+  "author": "aic Team",
   "license": "MIT",
   "dependencies": {
     "prettier": "^3.0.0"

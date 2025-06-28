@@ -1,0 +1,355 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Primary (OLTP)
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: postgres-primary
+    environment:
+      POSTGRES_DB: aic_primary
+      POSTGRES_USER: aic_admin
+      POSTGRES_PASSWORD: aic_secure_pass
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: repl_pass
+      PGUSER: aic_admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+      - ./config/postgresql/primary/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./config/postgresql/primary/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./scripts/postgresql/init-primary.sh:/docker-entrypoint-initdb.d/init-primary.sh
+      - ./backups/postgresql:/backups
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c hba_file=/etc/postgresql/pg_hba.conf
+    networks:
+      - database-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aic_admin -d aic_primary"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Read Replica 1
+  postgres-replica-1:
+    image: postgres:15-alpine
+    container_name: postgres-replica-1
+    environment:
+      POSTGRES_USER: aic_admin
+      POSTGRES_PASSWORD: aic_secure_pass
+      POSTGRES_PRIMARY_HOST: postgres-primary
+      POSTGRES_PRIMARY_PORT: 5432
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: repl_pass
+      PGUSER: aic_admin
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-replica-1-data:/var/lib/postgresql/data
+      - ./config/postgresql/replica/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./scripts/postgresql/init-replica.sh:/docker-entrypoint-initdb.d/init-replica.sh
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - database-network
+
+  # PostgreSQL Read Replica 2
+  postgres-replica-2:
+    image: postgres:15-alpine
+    container_name: postgres-replica-2
+    environment:
+      POSTGRES_USER: aic_admin
+      POSTGRES_PASSWORD: aic_secure_pass
+      POSTGRES_PRIMARY_HOST: postgres-primary
+      POSTGRES_PRIMARY_PORT: 5432
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: repl_pass
+      PGUSER: aic_admin
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-replica-2-data:/var/lib/postgresql/data
+      - ./config/postgresql/replica/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./scripts/postgresql/init-replica.sh:/docker-entrypoint-initdb.d/init-replica.sh
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - database-network
+
+  # PostgreSQL Shard 1 (Users 0-999999)
+  postgres-shard-1:
+    image: postgres:15-alpine
+    container_name: postgres-shard-1
+    environment:
+      POSTGRES_DB: aic_shard_1
+      POSTGRES_USER: aic_shard_user
+      POSTGRES_PASSWORD: shard_pass_1
+      PGUSER: aic_shard_user
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres-shard-1-data:/var/lib/postgresql/data
+      - ./config/postgresql/shard/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./scripts/postgresql/init-shard.sh:/docker-entrypoint-initdb.d/init-shard.sh
+    networks:
+      - database-network
+
+  # PostgreSQL Shard 2 (Users 1000000-1999999)
+  postgres-shard-2:
+    image: postgres:15-alpine
+    container_name: postgres-shard-2
+    environment:
+      POSTGRES_DB: aic_shard_2
+      POSTGRES_USER: aic_shard_user
+      POSTGRES_PASSWORD: shard_pass_2
+      PGUSER: aic_shard_user
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres-shard-2-data:/var/lib/postgresql/data
+      - ./config/postgresql/shard/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./scripts/postgresql/init-shard.sh:/docker-entrypoint-initdb.d/init-shard.sh
+    networks:
+      - database-network
+
+  # PgBouncer Connection Pooler
+  pgbouncer:
+    image: pgbouncer/pgbouncer:1.20.1
+    container_name: pgbouncer
+    environment:
+      DATABASES_HOST: postgres-primary
+      DATABASES_PORT: 5432
+      DATABASES_USER: aic_admin
+      DATABASES_PASSWORD: aic_secure_pass
+      DATABASES_DBNAME: aic_primary
+      POOL_MODE: transaction
+      SERVER_RESET_QUERY: DISCARD ALL
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 25
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      SERVER_LIFETIME: 3600
+      SERVER_IDLE_TIMEOUT: 600
+      LOG_CONNECTIONS: 1
+      LOG_DISCONNECTIONS: 1
+      LOG_POOLER_ERRORS: 1
+    ports:
+      - "6432:5432"
+    volumes:
+      - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
+      - ./config/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt
+    depends_on:
+      - postgres-primary
+    networks:
+      - database-network
+
+  # HAProxy Load Balancer for Read Replicas
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: haproxy-db
+    ports:
+      - "5439:5432"  # Read replicas load balancer
+      - "8404:8404"  # HAProxy stats
+    volumes:
+      - ./config/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+    depends_on:
+      - postgres-replica-1
+      - postgres-replica-2
+    networks:
+      - database-network
+
+  # ClickHouse for Analytics (OLAP)
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8-alpine
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_DB: aic_analytics
+      CLICKHOUSE_USER: aic_analytics
+      CLICKHOUSE_PASSWORD: analytics_pass
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native interface
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+      - ./config/clickhouse/config.xml:/etc/clickhouse-server/config.xml
+      - ./config/clickhouse/users.xml:/etc/clickhouse-server/users.xml
+      - ./scripts/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - database-network
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  # ClickHouse Keeper (Zookeeper replacement)
+  clickhouse-keeper:
+    image: clickhouse/clickhouse-keeper:23.8-alpine
+    container_name: clickhouse-keeper
+    ports:
+      - "9181:9181"
+    volumes:
+      - clickhouse-keeper-data:/var/lib/clickhouse-keeper
+      - ./config/clickhouse-keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml
+    networks:
+      - database-network
+
+  # Flyway for Database Migrations
+  flyway:
+    image: flyway/flyway:9.21-alpine
+    container_name: flyway
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres-primary:5432/aic_primary
+      FLYWAY_USER: aic_admin
+      FLYWAY_PASSWORD: aic_secure_pass
+      FLYWAY_SCHEMAS: public
+      FLYWAY_BASELINE_ON_MIGRATE: true
+      FLYWAY_VALIDATE_ON_MIGRATE: true
+    volumes:
+      - ./migrations/sql:/flyway/sql
+      - ./migrations/conf:/flyway/conf
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - database-network
+    profiles:
+      - migration
+
+  # MinIO for Backup Storage (S3-compatible)
+  minio:
+    image: minio/minio:RELEASE.2023-08-31T15-31-16Z
+    container_name: minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9001:9000"
+      - "9002:9001"
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - database-network
+
+  # WAL-G for PostgreSQL Backup
+  wal-g:
+    image: wal-g/wal-g:v2.0.1
+    container_name: wal-g
+    environment:
+      WALG_S3_PREFIX: s3://postgres-backups
+      AWS_S3_FORCE_PATH_STYLE: "true"
+      AWS_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      AWS_REGION: us-east-1
+      PGHOST: postgres-primary
+      PGPORT: 5432
+      PGUSER: aic_admin
+      PGPASSWORD: aic_secure_pass
+      PGDATABASE: aic_primary
+    volumes:
+      - ./scripts/wal-g:/scripts
+      - postgres-primary-data:/var/lib/postgresql/data:ro
+    depends_on:
+      - postgres-primary
+      - minio
+    networks:
+      - database-network
+    profiles:
+      - backup
+
+  # PostgreSQL Exporter for Monitoring
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.13.2
+    container_name: postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://aic_admin:aic_secure_pass@postgres-primary:5432/aic_primary?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres-primary
+    networks:
+      - database-network
+
+  # ClickHouse Exporter for Monitoring
+  clickhouse-exporter:
+    image: f1yegor/clickhouse-exporter:latest
+    container_name: clickhouse-exporter
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: aic_analytics
+      CLICKHOUSE_PASSWORD: analytics_pass
+    ports:
+      - "9116:9116"
+    depends_on:
+      - clickhouse
+    networks:
+      - database-network
+
+  # Debezium for Change Data Capture
+  debezium:
+    image: debezium/connect:2.3
+    container_name: debezium
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: debezium-cluster
+      CONFIG_STORAGE_TOPIC: debezium-configs
+      OFFSET_STORAGE_TOPIC: debezium-offsets
+      STATUS_STORAGE_TOPIC: debezium-status
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: false
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: false
+    ports:
+      - "8083:8083"
+    depends_on:
+      - postgres-primary
+      - kafka
+    volumes:
+      - ./config/debezium:/kafka/config
+    networks:
+      - database-network
+      - microservices-network
+
+  # Redis for Caching
+  redis-cluster:
+    image: redis:7-alpine
+    container_name: redis-cluster
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - database-network
+
+volumes:
+  postgres-primary-data:
+  postgres-replica-1-data:
+  postgres-replica-2-data:
+  postgres-shard-1-data:
+  postgres-shard-2-data:
+  clickhouse-data:
+  clickhouse-logs:
+  clickhouse-keeper-data:
+  minio-data:
+  redis-data:
+
+networks:
+  database-network:
+    driver: bridge
+  microservices-network:
+    external: true

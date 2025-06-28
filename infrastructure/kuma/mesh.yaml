@@ -1,0 +1,160 @@
+apiVersion: kuma.io/v1alpha1
+kind: Mesh
+metadata:
+  name: microservices-mesh
+spec:
+  mtls:
+    enabledBackend: ca-1
+    backends:
+      - name: ca-1
+        type: builtin
+  tracing:
+    defaultBackend: jaeger-1
+    backends:
+      - name: jaeger-1
+        type: jaeger
+        conf:
+          address: jaeger:14268
+  logging:
+    defaultBackend: file
+    backends:
+      - name: file
+        type: file
+        conf:
+          path: /var/log/kuma-dp.log
+  metrics:
+    enabledBackend: prometheus-1
+    backends:
+      - name: prometheus-1
+        type: prometheus
+        conf:
+          port: 5670
+          path: /metrics
+---
+apiVersion: kuma.io/v1alpha1
+kind: TrafficPermission
+metadata:
+  name: allow-all-microservices
+  namespace: kuma-system
+  mesh: microservices-mesh
+spec:
+  sources:
+    - match:
+        kuma.io/service: "*"
+  destinations:
+    - match:
+        kuma.io/service: "*"
+---
+apiVersion: kuma.io/v1alpha1
+kind: TrafficRoute
+metadata:
+  name: user-service-route
+  namespace: kuma-system
+  mesh: microservices-mesh
+spec:
+  sources:
+    - match:
+        kuma.io/service: "*"
+  destinations:
+    - match:
+        kuma.io/service: user-domain
+  conf:
+    loadBalancer:
+      roundRobin: {}
+    destination:
+      kuma.io/service: user-domain
+---
+apiVersion: kuma.io/v1alpha1
+kind: HealthCheck
+metadata:
+  name: user-service-health
+  namespace: kuma-system
+  mesh: microservices-mesh
+spec:
+  sources:
+    - match:
+        kuma.io/service: "*"
+  destinations:
+    - match:
+        kuma.io/service: user-domain
+  conf:
+    protocol: http
+    path: /health
+    intervalSeconds: 10
+    timeoutSeconds: 3
+    unhealthyThreshold: 3
+    healthyThreshold: 1
+---
+apiVersion: kuma.io/v1alpha1
+kind: CircuitBreaker
+metadata:
+  name: user-service-circuit-breaker
+  namespace: kuma-system
+  mesh: microservices-mesh
+spec:
+  sources:
+    - match:
+        kuma.io/service: "*"
+  destinations:
+    - match:
+        kuma.io/service: user-domain
+  conf:
+    interval: 30s
+    baseEjectionTime: 30s
+    maxEjectionPercent: 50
+    splitExternalAndLocalErrors: false
+    thresholds:
+      maxConnections: 1024
+      maxPendingRequests: 1024
+      maxRequests: 1024
+      maxRetries: 3
+---
+apiVersion: kuma.io/v1alpha1
+kind: Retry
+metadata:
+  name: user-service-retry
+  namespace: kuma-system
+  mesh: microservices-mesh
+spec:
+  sources:
+    - match:
+        kuma.io/service: "*"
+  destinations:
+    - match:
+        kuma.io/service: user-domain
+  conf:
+    http:
+      numRetries: 3
+      perTryTimeout: 16s
+      backOff:
+        baseInterval: 25ms
+        maxInterval: 250ms
+    grpc:
+      numRetries: 3
+      perTryTimeout: 16s
+      backOff:
+        baseInterval: 25ms
+        maxInterval: 250ms
+---
+apiVersion: kuma.io/v1alpha1
+kind: Timeout
+metadata:
+  name: user-service-timeout
+  namespace: kuma-system
+  mesh: microservices-mesh
+spec:
+  sources:
+    - match:
+        kuma.io/service: "*"
+  destinations:
+    - match:
+        kuma.io/service: user-domain
+  conf:
+    connectTimeout: 5s
+    tcp:
+      idleTimeout: 3600s
+    http:
+      requestTimeout: 15s
+      idleTimeout: 3600s
+    grpc:
+      streamIdleTimeout: 300s

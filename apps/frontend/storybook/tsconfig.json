@@ -1,10 +1,10 @@
 {
-  "extends": "@nexus/tsconfig/react.json",
+  "extends": "@aic/tsconfig/react.json",
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@nexus/*": ["../../packages/*/src"]
+      "@aic/*": ["../../packages/*/src"]
     }
   },
   "include": [

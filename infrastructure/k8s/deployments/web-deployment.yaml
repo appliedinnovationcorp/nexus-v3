@@ -1,29 +1,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nexus-web
+  name: aic-web
   labels:
-    app: nexus-web
+    app: aic-web
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: nexus-web
+      app: aic-web
   template:
     metadata:
       labels:
-        app: nexus-web
+        app: aic-web
     spec:
       containers:
       - name: web
-        image: nexus-web:latest
+        image: aic-web:latest
         ports:
         - containerPort: 3000
         env:
         - name: NODE_ENV
           value: "production"
         - name: API_URL
-          value: "http://nexus-api-service:3001"
+          value: "http://aic-api-service:3001"
         resources:
           requests:
             memory: "256Mi"

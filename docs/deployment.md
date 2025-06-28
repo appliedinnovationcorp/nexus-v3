@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers deployment strategies for the Nexus Workspace monorepo across different environments.
+This guide covers deployment strategies for the aic Workspace monorepo across different environments.
 
 ## Prerequisites
 
@@ -75,21 +75,21 @@ terraform apply
 ### Docker Build
 ```bash
 # Build production image
-docker build -t nexus-app:latest .
+docker build -t aic-app:latest .
 
 # Tag for ECR
-docker tag nexus-app:latest <account-id>.dkr.ecr.us-east-1.amazonaws.com/nexus-app:latest
+docker tag aic-app:latest <account-id>.dkr.ecr.us-east-1.amazonaws.com/aic-app:latest
 
 # Push to ECR
-docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/nexus-app:latest
+docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/aic-app:latest
 ```
 
 ### ECS Deployment
 ```bash
 # Update ECS service
 aws ecs update-service \
-  --cluster nexus-cluster \
-  --service nexus-service \
+  --cluster aic-cluster \
+  --service aic-service \
   --force-new-deployment
 ```
 
@@ -138,10 +138,10 @@ S3_BUCKET_NAME=your-bucket
 ### Health Checks
 ```bash
 # API health check
-curl https://api.nexus.com/health
+curl https://api.aic.com/health
 
 # Database health check
-curl https://api.nexus.com/health/db
+curl https://api.aic.com/health/db
 ```
 
 ## CI/CD Pipeline
@@ -169,9 +169,9 @@ pnpm deploy:all
 ```bash
 # Rollback to previous version
 aws ecs update-service \
-  --cluster nexus-cluster \
-  --service nexus-service \
-  --task-definition nexus-task:previous-revision
+  --cluster aic-cluster \
+  --service aic-service \
+  --task-definition aic-task:previous-revision
 ```
 
 ### Database Rollback
@@ -215,10 +215,10 @@ pnpm db:rollback --steps=1
 ### Debug Commands
 ```bash
 # View container logs
-aws logs tail /aws/ecs/nexus-app --follow
+aws logs tail /aws/ecs/aic-app --follow
 
 # Check service status
-aws ecs describe-services --cluster nexus-cluster --services nexus-service
+aws ecs describe-services --cluster aic-cluster --services aic-service
 
 # Monitor metrics
 aws cloudwatch get-metric-statistics --namespace AWS/ECS

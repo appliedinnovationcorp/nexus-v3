@@ -2,7 +2,7 @@
 
 ## Overview
 
-Nexus Workspace is built as a monorepo using modern tools and best practices. The architecture follows a microservices approach with shared libraries and utilities.
+aic Workspace is built as a monorepo using modern tools and best practices. The architecture follows a microservices approach with shared libraries and utilities.
 
 ## System Architecture
 

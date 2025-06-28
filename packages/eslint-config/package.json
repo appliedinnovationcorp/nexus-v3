@@ -1,5 +1,5 @@
 {
-  "name": "@nexus/eslint-config",
+  "name": "@aic/eslint-config",
   "version": "0.1.0",
   "main": "index.js",
   "files": [

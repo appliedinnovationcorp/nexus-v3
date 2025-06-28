@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# TypeScript Setup Script for Nexus Workspace
-echo "🔧 Setting up TypeScript for Nexus Workspace..."
+# TypeScript Setup Script for aic Workspace
+echo "🔧 Setting up TypeScript for aic Workspace..."
 
 # Function to create tsconfig for Node.js apps
 create_node_tsconfig() {
@@ -12,14 +12,14 @@ create_node_tsconfig() {
         echo "📝 Creating tsconfig.json for $app_name..."
         cat > "$app_path/tsconfig.json" << EOF
 {
-  "extends": "@nexus/tsconfig/base.json",
+  "extends": "@aic/tsconfig/base.json",
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "./dist",
     "rootDir": "./src",
     "paths": {
       "@/*": ["./src/*"],
-      "@nexus/*": ["../../packages/*/src"]
+      "@aic/*": ["../../packages/*/src"]
     },
     "types": ["node"],
     "lib": ["ES2022"],
@@ -55,12 +55,12 @@ create_react_tsconfig() {
         echo "📝 Creating tsconfig.json for $app_name..."
         cat > "$app_path/tsconfig.json" << EOF
 {
-  "extends": "@nexus/tsconfig/react.json",
+  "extends": "@aic/tsconfig/react.json",
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@nexus/*": ["../../packages/*/src"]
+      "@aic/*": ["../../packages/*/src"]
     }
   },
   "include": [
@@ -88,9 +88,9 @@ create_package_tsconfig() {
     if [ ! -f "$package_path/tsconfig.json" ]; then
         echo "📝 Creating tsconfig.json for $package_name package..."
         
-        local extends_config="@nexus/tsconfig/base.json"
+        local extends_config="@aic/tsconfig/base.json"
         if [ "$is_react" = true ]; then
-            extends_config="@nexus/tsconfig/react.json"
+            extends_config="@aic/tsconfig/react.json"
         fi
         
         cat > "$package_path/tsconfig.json" << EOF
@@ -105,7 +105,7 @@ create_package_tsconfig() {
     "noEmit": false,
     "composite": true,
     "paths": {
-      "@nexus/*": ["../*/src"]
+      "@aic/*": ["../*/src"]
     }
   },
   "include": [
@@ -167,7 +167,7 @@ echo "🌐 Creating global type definitions..."
 mkdir -p "./types"
 
 cat > "./types/global.d.ts" << EOF
-// Global type definitions for Nexus Workspace
+// Global type definitions for aic Workspace
 
 declare global {
   namespace NodeJS {

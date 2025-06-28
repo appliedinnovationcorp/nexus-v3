@@ -1,5 +1,5 @@
 {
-  "name": "nexus-workspace",
+  "name": "aic-workspace",
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@8.15.0",
@@ -15,24 +15,24 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "turbo run build --filter=!@nexus/docs && changeset publish",
+    "release": "turbo run build --filter=!@aic/docs && changeset publish",
     "db:generate": "turbo run db:generate",
     "db:push": "turbo run db:push",
     "db:migrate": "turbo run db:migrate",
     "db:studio": "turbo run db:studio",
-    "docker:build": "docker build -t nexus-app .",
-    "docker:run": "docker run -p 3000:3000 nexus-app",
+    "docker:build": "docker build -t aic-app .",
+    "docker:run": "docker run -p 3000:3000 aic-app",
     "docker:dev": "docker-compose up -d",
     "docker:down": "docker-compose down"
   },
   "devDependencies": {
+    "@aic/eslint-config": "workspace:*",
+    "@aic/prettier-config": "workspace:*",
+    "@aic/tsconfig": "workspace:*",
     "@changesets/cli": "^2.26.0",
-    "@nexus/eslint-config": "workspace:*",
-    "@nexus/prettier-config": "workspace:*",
-    "@nexus/tsconfig": "workspace:*",
     "eslint": "^8.57.0",
     "prettier": "^3.0.0",
-    "turbo": "^1.10.0",
+    "turbo": "^2.5.4",
     "typescript": "^5.2.2"
   },
   "workspaces": [

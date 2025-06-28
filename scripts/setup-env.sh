@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Environment Setup Script for Nexus Workspace
-echo "🔧 Setting up environment variables for Nexus Workspace..."
+# Environment Setup Script for aic Workspace
+echo "🔧 Setting up environment variables for aic Workspace..."
 
 # Function to generate random secret
 generate_secret() {

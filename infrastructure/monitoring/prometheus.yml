@@ -1,0 +1,106 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Kong Gateway metrics
+  - job_name: 'kong'
+    static_configs:
+      - targets: ['kong:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Kuma Control Plane
+  - job_name: 'kuma-control-plane'
+    static_configs:
+      - targets: ['kuma-control-plane:5681']
+    metrics_path: '/metrics'
+
+  # Kuma Data Plane Proxies
+  - job_name: 'kuma-dataplanes'
+    static_configs:
+      - targets: 
+        - 'user-domain:5670'
+        - 'order-domain:5670'
+        - 'inventory-domain:5670'
+    metrics_path: '/metrics'
+
+  # Kafka metrics
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:9101']
+    scrape_interval: 30s
+
+  # PostgreSQL metrics (using postgres_exporter)
+  - job_name: 'postgres-user'
+    static_configs:
+      - targets: ['postgres-exporter-user:9187']
+
+  - job_name: 'postgres-order'
+    static_configs:
+      - targets: ['postgres-exporter-order:9187']
+
+  - job_name: 'postgres-inventory'
+    static_configs:
+      - targets: ['postgres-exporter-inventory:9187']
+
+  # Redis metrics (using redis_exporter)
+  - job_name: 'redis-user'
+    static_configs:
+      - targets: ['redis-exporter-user:9121']
+
+  - job_name: 'redis-order'
+    static_configs:
+      - targets: ['redis-exporter-order:9121']
+
+  # EventStore metrics
+  - job_name: 'eventstore'
+    static_configs:
+      - targets: ['eventstore:2113']
+    metrics_path: '/stats'
+
+  # Consul metrics
+  - job_name: 'consul'
+    static_configs:
+      - targets: ['consul:8500']
+    metrics_path: '/v1/agent/metrics'
+    params:
+      format: ['prometheus']
+
+  # Application metrics
+  - job_name: 'user-domain'
+    static_configs:
+      - targets: ['user-domain:3001']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  - job_name: 'order-domain'
+    static_configs:
+      - targets: ['order-domain:3002']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  - job_name: 'inventory-domain'
+    static_configs:
+      - targets: ['inventory-domain:3003']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']

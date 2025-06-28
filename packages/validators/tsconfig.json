@@ -1,5 +1,5 @@
 {
-  "extends": "@nexus/tsconfig/base.json",
+  "extends": "@aic/tsconfig/base.json",
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "./dist",
@@ -9,7 +9,7 @@
     "noEmit": false,
     "composite": true,
     "paths": {
-      "@nexus/*": ["../*/src"]
+      "@aic/*": ["../*/src"]
     }
   },
   "include": [

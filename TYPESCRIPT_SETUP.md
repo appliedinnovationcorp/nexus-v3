@@ -1,4 +1,4 @@
-# TypeScript Setup for Nexus Workspace
+# TypeScript Setup for aic Workspace
 
 ## ✅ What's Been Configured
 
@@ -7,9 +7,9 @@
 - **Global types**: Created `types/global.d.ts` with common utility types and environment variables
 
 ### 2. Base TypeScript Configurations
-- **`@nexus/tsconfig/base.json`**: Strict TypeScript config for Node.js projects
-- **`@nexus/tsconfig/react.json`**: React-specific TypeScript config extending base
-- **`@nexus/tsconfig/react-native.json`**: React Native-specific config
+- **`@aic/tsconfig/base.json`**: Strict TypeScript config for Node.js projects
+- **`@aic/tsconfig/react.json`**: React-specific TypeScript config extending base
+- **`@aic/tsconfig/react-native.json`**: React Native-specific config
 
 ### 3. Application Configurations
 Each app has its own `tsconfig.json`:
@@ -73,7 +73,7 @@ Each package has its own `tsconfig.json` with proper build settings:
 - **No unchecked indexed access**: Safe array/object access
 
 ### Path Mapping
-- **Workspace packages**: `@nexus/*` maps to package sources
+- **Workspace packages**: `@aic/*` maps to package sources
 - **Local imports**: `@/*` maps to local src directories
 - **Cross-package imports**: Proper resolution between packages
 
@@ -105,13 +105,13 @@ pnpm format
 ### Individual Packages/Apps
 ```bash
 # Type check specific package
-pnpm --filter @nexus/ui type-check
+pnpm --filter @aic/ui type-check
 
 # Build specific package
-pnpm --filter @nexus/api build
+pnpm --filter @aic/api build
 
 # Start specific app in dev mode
-pnpm --filter @nexus/web dev
+pnpm --filter @aic/web dev
 ```
 
 ## 🔧 Development Workflow
@@ -124,7 +124,7 @@ pnpm --filter @nexus/web dev
 ## 📁 File Structure
 
 ```
-nexus-workspace/
+aic-workspace/
 ├── tsconfig.json                 # Root TypeScript config
 ├── types/
 │   └── global.d.ts              # Global type definitions

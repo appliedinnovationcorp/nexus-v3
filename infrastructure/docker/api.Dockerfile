@@ -21,7 +21,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build the API application
-RUN pnpm build --filter=@nexus/api
+RUN pnpm build --filter=@aic/api
 
 # Production stage
 FROM node:18-alpine AS production
@@ -38,4 +38,4 @@ COPY --from=base /app/package.json ./
 
 EXPOSE 3001
 
-CMD ["pnpm", "--filter=@nexus/api", "start"]
+CMD ["pnpm", "--filter=@aic/api", "start"]

@@ -1,4 +1,4 @@
-// Global type definitions for Nexus Workspace
+// Global type definitions for aic Workspace
 
 declare global {
   namespace NodeJS {
