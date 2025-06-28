@@ -1,0 +1,58 @@
+{
+  "extends": "@nexus/tsconfig/base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@nexus/*": ["./packages/*/src"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.js",
+    "**/*.jsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    "**/node_modules",
+    "**/dist",
+    "**/build",
+    "**/.next"
+  ],
+  "references": [
+    { "path": "./apps/web" },
+    { "path": "./apps/admin" },
+    { "path": "./apps/mobile" },
+    { "path": "./apps/docs" },
+    { "path": "./apps/storybook" },
+    { "path": "./apps/landing" },
+    { "path": "./apps/api" },
+    { "path": "./apps/graphql" },
+    { "path": "./apps/cron" },
+    { "path": "./apps/auth" },
+    { "path": "./apps/webhooks" },
+    { "path": "./apps/workers" },
+    { "path": "./apps/cli" },
+    { "path": "./apps/extension" },
+    { "path": "./apps/desktop" },
+    { "path": "./packages/ui" },
+    { "path": "./packages/utils" },
+    { "path": "./packages/config" },
+    { "path": "./packages/types" },
+    { "path": "./packages/components" },
+    { "path": "./packages/design-tokens" },
+    { "path": "./packages/icons" },
+    { "path": "./packages/constants" },
+    { "path": "./packages/validators" },
+    { "path": "./packages/api" },
+    { "path": "./packages/auth" },
+    { "path": "./packages/database" },
+    { "path": "./packages/services" },
+    { "path": "./packages/build-tools" }
+  ]
+}

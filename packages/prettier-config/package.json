@@ -1,0 +1,18 @@
+{
+  "name": "@nexus/prettier-config",
+  "version": "0.1.0",
+  "description": "Prettier configuration for Nexus Workspace",
+  "main": "./index.js",
+  "files": [
+    "index.js"
+  ],
+  "scripts": {
+    "test": "echo \"No tests for config package\""
+  },
+  "keywords": ["prettier", "config", "nexus"],
+  "author": "Nexus Team",
+  "license": "MIT",
+  "dependencies": {
+    "prettier": "^3.0.0"
+  }
+}
