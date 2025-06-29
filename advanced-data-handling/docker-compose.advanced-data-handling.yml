@@ -1,0 +1,409 @@
+version: '3.8'
+
+services:
+  # Data Validation Service
+  data-validation-service:
+    build:
+      context: ./docker/data-validation-service
+      dockerfile: Dockerfile
+    container_name: nexus-data-validation-service
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./config/validation-config.json:/app/config/validation.json
+      - ./schemas:/app/schemas
+      - ./validation:/app/validation
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+    depends_on:
+      - redis-data
+      - mongodb-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Data Transformation Service
+  data-transformation-service:
+    build:
+      context: ./docker/data-transformation-service
+      dockerfile: Dockerfile
+    container_name: nexus-data-transformation-service
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./config/transformation-config.json:/app/config/transformation.json
+      - ./transformation:/app/transformation
+      - ./pipelines:/app/pipelines
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+      - KAFKA_BROKERS=kafka-data:9092
+    depends_on:
+      - redis-data
+      - mongodb-data
+      - kafka-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Backup and Recovery Service
+  backup-recovery-service:
+    build:
+      context: ./docker/backup-recovery-service
+      dockerfile: Dockerfile
+    container_name: nexus-backup-recovery-service
+    ports:
+      - "5002:5000"
+    volumes:
+      - ./config/backup-config.json:/app/config/backup.json
+      - ./backup:/app/backup
+      - backup-storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+      - MINIO_ENDPOINT=minio-data:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+    depends_on:
+      - redis-data
+      - mongodb-data
+      - minio-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Data Archiving Service
+  data-archiving-service:
+    build:
+      context: ./docker/data-archiving-service
+      dockerfile: Dockerfile
+    container_name: nexus-data-archiving-service
+    ports:
+      - "5003:5000"
+    volumes:
+      - ./config/archiving-config.json:/app/config/archiving.json
+      - ./archiving:/app/archiving
+      - archive-storage:/app/archive
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+      - MINIO_ENDPOINT=minio-data:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+    depends_on:
+      - redis-data
+      - mongodb-data
+      - minio-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # GDPR Compliance Service
+  gdpr-compliance-service:
+    build:
+      context: ./docker/gdpr-compliance-service
+      dockerfile: Dockerfile
+    container_name: nexus-gdpr-compliance-service
+    ports:
+      - "5004:5000"
+    volumes:
+      - ./config/gdpr-config.json:/app/config/gdpr.json
+      - ./gdpr:/app/gdpr
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+      - ELASTICSEARCH_URL=http://elasticsearch-data:9200
+    depends_on:
+      - redis-data
+      - mongodb-data
+      - elasticsearch-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Data Encryption Service
+  data-encryption-service:
+    build:
+      context: ./docker/data-encryption-service
+      dockerfile: Dockerfile
+    container_name: nexus-data-encryption-service
+    ports:
+      - "5005:5000"
+    volumes:
+      - ./config/encryption-config.json:/app/config/encryption.json
+      - ./encryption:/app/encryption
+      - encryption-keys:/app/keys
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+      - VAULT_ENDPOINT=http://vault-data:8200
+      - VAULT_TOKEN=root-token
+    depends_on:
+      - redis-data
+      - mongodb-data
+      - vault-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Data Pipeline Orchestrator
+  data-pipeline-orchestrator:
+    build:
+      context: ./docker/data-pipeline-orchestrator
+      dockerfile: Dockerfile
+    container_name: nexus-data-pipeline-orchestrator
+    ports:
+      - "5006:5000"
+    volumes:
+      - ./config/orchestrator-config.json:/app/config/orchestrator.json
+      - ./pipelines:/app/pipelines
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+      - VALIDATION_SERVICE_URL=http://data-validation-service:5000
+      - TRANSFORMATION_SERVICE_URL=http://data-transformation-service:5000
+      - BACKUP_SERVICE_URL=http://backup-recovery-service:5000
+      - ARCHIVING_SERVICE_URL=http://data-archiving-service:5000
+      - GDPR_SERVICE_URL=http://gdpr-compliance-service:5000
+      - ENCRYPTION_SERVICE_URL=http://data-encryption-service:5000
+    depends_on:
+      - redis-data
+      - mongodb-data
+      - data-validation-service
+      - data-transformation-service
+      - backup-recovery-service
+      - data-archiving-service
+      - gdpr-compliance-service
+      - data-encryption-service
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Data Quality Monitor
+  data-quality-monitor:
+    build:
+      context: ./docker/data-quality-monitor
+      dockerfile: Dockerfile
+    container_name: nexus-data-quality-monitor
+    ports:
+      - "5007:5000"
+    volumes:
+      - ./config/quality-config.json:/app/config/quality.json
+      - ./monitoring:/app/monitoring
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-data:6379
+      - MONGODB_URL=mongodb://mongodb-data:27017/data-handling
+      - ELASTICSEARCH_URL=http://elasticsearch-data:9200
+    depends_on:
+      - redis-data
+      - mongodb-data
+      - elasticsearch-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Redis for Data Caching
+  redis-data:
+    image: redis:7-alpine
+    container_name: nexus-redis-data
+    ports:
+      - "6383:6379"
+    volumes:
+      - ./config/redis-data.conf:/usr/local/etc/redis/redis.conf
+      - redis-data-storage:/data
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # MongoDB for Data Storage
+  mongodb-data:
+    image: mongo:7
+    container_name: nexus-mongodb-data
+    ports:
+      - "27020:27017"
+    volumes:
+      - ./config/mongodb-data.conf:/etc/mongod.conf
+      - mongodb-data-storage:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=datahandling
+      - MONGO_INITDB_ROOT_PASSWORD=datahandling123
+      - MONGO_INITDB_DATABASE=data-handling
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # MinIO for Object Storage
+  minio-data:
+    image: minio/minio:latest
+    container_name: nexus-minio-data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data-storage:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    command: server /data --console-address ":9001"
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # HashiCorp Vault for Secrets Management
+  vault-data:
+    image: vault:latest
+    container_name: nexus-vault-data
+    ports:
+      - "8200:8200"
+    volumes:
+      - ./config/vault-config.hcl:/vault/config/vault.hcl
+      - vault-data-storage:/vault/data
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=root-token
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Apache Kafka for Data Streaming
+  zookeeper-data:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: nexus-zookeeper-data
+    ports:
+      - "2182:2181"
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+    volumes:
+      - zookeeper-data-storage:/var/lib/zookeeper/data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  kafka-data:
+    image: confluentinc/cp-kafka:latest
+    container_name: nexus-kafka-data
+    ports:
+      - "9093:9092"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper-data:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-data:9092
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+    volumes:
+      - kafka-data-storage:/var/lib/kafka/data
+    depends_on:
+      - zookeeper-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # ElasticSearch for Data Analytics
+  elasticsearch-data:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: nexus-elasticsearch-data
+    ports:
+      - "9204:9200"
+      - "9304:9300"
+    volumes:
+      - elasticsearch-data-storage:/usr/share/elasticsearch/data
+      - ./config/elasticsearch-data.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Kibana for Data Visualization
+  kibana-data:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: nexus-kibana-data
+    ports:
+      - "5605:5601"
+    volumes:
+      - ./config/kibana-data.yml:/usr/share/kibana/config/kibana.yml
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch-data:9200
+    depends_on:
+      - elasticsearch-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Prometheus for Data Monitoring
+  prometheus-data:
+    image: prom/prometheus:latest
+    container_name: nexus-prometheus-data
+    ports:
+      - "9098:9090"
+    volumes:
+      - ./config/prometheus-data.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data-storage:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.enable-lifecycle'
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  # Grafana for Data Visualization
+  grafana-data:
+    image: grafana/grafana:latest
+    container_name: nexus-grafana-data
+    ports:
+      - "3313:3000"
+    volumes:
+      - ./config/grafana-data.ini:/etc/grafana/grafana.ini
+      - ./config/grafana-dashboards:/var/lib/grafana/dashboards
+      - ./config/grafana-provisioning:/etc/grafana/provisioning
+      - grafana-data-storage:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=datahandling123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-worldmap-panel,grafana-piechart-panel
+    depends_on:
+      - prometheus-data
+    networks:
+      - data-network
+    restart: unless-stopped
+
+volumes:
+  redis-data-storage:
+  mongodb-data-storage:
+  minio-data-storage:
+  vault-data-storage:
+  zookeeper-data-storage:
+  kafka-data-storage:
+  elasticsearch-data-storage:
+  prometheus-data-storage:
+  grafana-data-storage:
+  backup-storage:
+  archive-storage:
+  encryption-keys:
+
+networks:
+  data-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
