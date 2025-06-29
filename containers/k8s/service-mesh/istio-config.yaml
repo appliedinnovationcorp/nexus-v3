@@ -1,0 +1,470 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: nexus-v3-istio
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  # Istio configuration
+  values:
+    global:
+      meshID: nexus-v3-mesh
+      multiCluster:
+        clusterName: nexus-v3-cluster
+      network: nexus-v3-network
+      
+    pilot:
+      traceSampling: 1.0
+      env:
+        EXTERNAL_ISTIOD: false
+        PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION: true
+        PILOT_ENABLE_CROSS_CLUSTER_WORKLOAD_ENTRY: true
+        
+    gateways:
+      istio-ingressgateway:
+        autoscaleEnabled: true
+        autoscaleMin: 2
+        autoscaleMax: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+            
+  components:
+    pilot:
+      k8s:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2048Mi
+          limits:
+            cpu: 1000m
+            memory: 4096Mi
+        hpaSpec:
+          minReplicas: 2
+          maxReplicas: 5
+          metrics:
+            - type: Resource
+              resource:
+                name: cpu
+                target:
+                  type: Utilization
+                  averageUtilization: 80
+                  
+    ingressGateways:
+      - name: istio-ingressgateway
+        enabled: true
+        k8s:
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 2000m
+              memory: 1024Mi
+          hpaSpec:
+            minReplicas: 2
+            maxReplicas: 10
+            metrics:
+              - type: Resource
+                resource:
+                  name: cpu
+                  target:
+                    type: Utilization
+                    averageUtilization: 80
+          service:
+            type: LoadBalancer
+            ports:
+              - port: 15021
+                targetPort: 15021
+                name: status-port
+              - port: 80
+                targetPort: 8080
+                name: http2
+              - port: 443
+                targetPort: 8443
+                name: https
+              - port: 15443
+                targetPort: 15443
+                name: tls
+                
+    egressGateways:
+      - name: istio-egressgateway
+        enabled: true
+        k8s:
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 2000m
+              memory: 1024Mi
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: nexus-v3-gateway
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - nexus-v3.local
+        - api.nexus-v3.local
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: nexus-v3-tls-secret
+      hosts:
+        - nexus-v3.local
+        - api.nexus-v3.local
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: nexus-v3-vs
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  hosts:
+    - nexus-v3.local
+    - api.nexus-v3.local
+  gateways:
+    - nexus-v3-gateway
+  http:
+    # API routes
+    - match:
+        - uri:
+            prefix: /api/v1/
+        - headers:
+            host:
+              exact: api.nexus-v3.local
+      route:
+        - destination:
+            host: nexus-v3-service
+            port:
+              number: 80
+          weight: 100
+      fault:
+        delay:
+          percentage:
+            value: 0.1
+          fixedDelay: 5s
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+        retryOn: 5xx,reset,connect-failure,refused-stream
+      timeout: 30s
+      
+    # Health check routes
+    - match:
+        - uri:
+            exact: /health
+        - uri:
+            exact: /ready
+      route:
+        - destination:
+            host: nexus-v3-service
+            port:
+              number: 80
+      timeout: 5s
+      
+    # Static content routes
+    - match:
+        - uri:
+            prefix: /static/
+      route:
+        - destination:
+            host: nexus-v3-service
+            port:
+              number: 80
+      headers:
+        response:
+          add:
+            cache-control: "public, max-age=31536000"
+            
+    # Default route
+    - route:
+        - destination:
+            host: nexus-v3-service
+            port:
+              number: 80
+          weight: 100
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: nexus-v3-dr
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  host: nexus-v3-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        keepAlive:
+          time: 7200s
+          interval: 75s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        consecutiveGatewayErrors: 5
+        h2UpgradePolicy: UPGRADE
+    loadBalancer:
+      simple: LEAST_CONN
+      consistentHash:
+        httpHeaderName: "x-user-id"
+    outlierDetection:
+      consecutiveGatewayErrors: 3
+      consecutive5xxErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: true
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+      trafficPolicy:
+        connectionPool:
+          tcp:
+            maxConnections: 50
+    - name: v2
+      labels:
+        version: v2
+      trafficPolicy:
+        connectionPool:
+          tcp:
+            maxConnections: 100
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: nexus-v3-peer-auth
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexus-v3
+  mtls:
+    mode: STRICT
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: nexus-v3-authz
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexus-v3
+  rules:
+    # Allow health checks
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/health", "/ready", "/metrics"]
+    
+    # Allow API access with authentication
+    - to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE"]
+            paths: ["/api/*"]
+      when:
+        - key: request.headers[authorization]
+          values: ["Bearer *"]
+    
+    # Allow static content
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/static/*", "/favicon.ico"]
+    
+    # Allow from ingress gateway
+    - from:
+        - source:
+            principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+    
+    # Allow from monitoring
+    - from:
+        - source:
+            namespaces: ["monitoring"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/metrics"]
+
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: nexus-v3-telemetry
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+    - overrides:
+        - match:
+            metric: ALL_METRICS
+          tagOverrides:
+            request_id:
+              operation: UPSERT
+              value: "%{REQUEST_ID}"
+            user_id:
+              operation: UPSERT
+              value: "%{REQUEST_HEADERS['x-user-id']}"
+  tracing:
+    - providers:
+        - name: jaeger
+  accessLogging:
+    - providers:
+        - name: otel
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-grafana-dashboards
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+    grafana_dashboard: "1"
+data:
+  istio-service-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "Istio Service Dashboard - Nexus V3",
+        "panels": [
+          {
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total{destination_service_name=\"nexus-v3-service\"}[5m]))"
+              }
+            ]
+          },
+          {
+            "title": "Success Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total{destination_service_name=\"nexus-v3-service\",response_code!~\"5.*\"}[5m])) / sum(rate(istio_requests_total{destination_service_name=\"nexus-v3-service\"}[5m]))"
+              }
+            ]
+          },
+          {
+            "title": "Response Time",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name=\"nexus-v3-service\"}[5m])) by (le))"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: nexus-v3-wasm-filter
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: service-mesh
+spec:
+  workloadSelector:
+    labels:
+      app.kubernetes.io/name: nexus-v3
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: "envoy.filters.network.http_connection_manager"
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.wasm
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+            config:
+              name: "rate_limiter"
+              root_id: "rate_limiter"
+              vm_config:
+                vm_id: "rate_limiter"
+                runtime: "envoy.wasm.runtime.v8"
+                code:
+                  local:
+                    inline_string: |
+                      class RateLimiter {
+                        constructor(rootContext) {
+                          this.rootContext = rootContext;
+                        }
+                        
+                        onRequestHeaders() {
+                          const userAgent = this.getRequestHeader("user-agent");
+                          if (userAgent && userAgent.includes("bot")) {
+                            this.sendLocalResponse(429, "Rate limited", "", []);
+                            return FilterHeadersStatus.StopIteration;
+                          }
+                          return FilterHeadersStatus.Continue;
+                        }
+                      }
+              configuration:
+                "@type": type.googleapis.com/google.protobuf.StringValue
+                value: |
+                  {
+                    "rate_limit": {
+                      "requests_per_minute": 1000,
+                      "burst_size": 100
+                    }
+                  }

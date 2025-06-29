@@ -1,6 +1,6 @@
 # aic V3 Workspace
 
-A comprehensive full-stack monorepo built with modern tools, best practices, and enterprise-grade compliance capabilities.
+A comprehensive full-stack monorepo built with modern tools, best practices, enterprise-grade compliance capabilities, advanced monitoring, CI/CD pipelines, and container orchestration.
 
 ## 🚀 Quick Start
 
@@ -17,8 +17,8 @@ pnpm build
 # Run tests
 pnpm test
 
-# Start compliance infrastructure (optional)
-cd compliance && docker-compose -f docker-compose.compliance.yml up -d
+# Start enterprise infrastructure
+./scripts/start-all-services.sh
 ```
 
 ## 📁 Project Structure
@@ -28,7 +28,11 @@ cd compliance && docker-compose -f docker-compose.compliance.yml up -d
 - `tools/` - Development tools and scripts
 - `docs/` - Project documentation
 - `infrastructure/` - Infrastructure as Code
-- `compliance/` - **NEW** Enterprise compliance system with GDPR, SOC 2, audit logging, and data retention
+- `compliance/` - Enterprise compliance system with GDPR, SOC 2, audit logging, and data retention
+- `monitoring/` - **NEW** Comprehensive monitoring stack with APM, infrastructure monitoring, and observability
+- `alerting/` - **NEW** Enterprise alerting & incident management with chaos engineering and SLO monitoring
+- `cicd/` - **NEW** Advanced CI/CD pipeline with multi-stage deployments and security scanning
+- `containers/` - **NEW** Enterprise container orchestration with Kubernetes, Helm, and service mesh
 
 ## 🛠 Tech Stack
 
@@ -47,6 +51,38 @@ cd compliance && docker-compose -f docker-compose.compliance.yml up -d
 - **Monitoring**: Grafana, Prometheus
 - **Anonymization**: Multi-algorithm privacy engine
 - **Compliance**: GDPR, SOC 2 Type II, HIPAA, PCI DSS ready
+
+### Monitoring & Observability
+- **APM**: Elastic APM with multi-language support
+- **Infrastructure Monitoring**: Prometheus + Grafana
+- **Log Aggregation**: ELK Stack + Vector
+- **Distributed Tracing**: Jaeger + OpenTelemetry
+- **Real User Monitoring**: Elastic RUM
+- **Synthetic Monitoring**: Uptime Kuma + Blackbox Exporter
+
+### Alerting & Incident Management
+- **Smart Alerting**: AlertManager with escalation policies
+- **Incident Response**: Grafana OnCall with automation
+- **Chaos Engineering**: Litmus Chaos + Chaos Monkey
+- **SLO Monitoring**: Pyrra + Sloth with error budgets
+- **Performance Budgets**: Automated regression detection
+- **Security Monitoring**: Falco runtime threat detection
+
+### CI/CD & DevOps
+- **CI/CD Orchestration**: Jenkins + GitLab CE + ArgoCD
+- **Container Registry**: Harbor with security scanning
+- **Code Quality**: SonarQube + OWASP ZAP + Trivy
+- **Feature Flags**: Flagsmith for gradual rollouts
+- **Performance Testing**: K6 with budget validation
+- **Infrastructure as Code**: Terraform + Terragrunt + Ansible
+
+### Container & Orchestration
+- **Container Runtime**: Docker with multi-stage distroless builds
+- **Orchestration**: Kubernetes + Helm charts
+- **Service Mesh**: Istio with mTLS and traffic management
+- **Autoscaling**: HPA + VPA with predictive scaling
+- **Security**: Pod Security Policies + Network Policies
+- **Ingress**: NGINX Ingress + cert-manager
 
 ## 🏛️ Compliance System
 
@@ -81,12 +117,151 @@ docker-compose -f compliance/docker-compose.compliance.yml up -d
 - **Legal Hold Management**: Litigation hold integration across all data processing
 - **Privacy by Design**: Built-in data minimization and purpose limitation
 
+## 📊 Monitoring & Observability
+
+Comprehensive monitoring stack with complete observability coverage:
+
+### 🔧 Monitoring Components
+- **APM Server** (`setup-monitoring.sh`) - Application performance monitoring with Elastic APM
+- **Infrastructure Monitoring** - Prometheus + Grafana with Node Exporter and cAdvisor
+- **Log Aggregation** - ELK Stack + Vector for centralized logging and analysis
+- **Distributed Tracing** - Jaeger + OpenTelemetry for request tracing
+- **Synthetic Monitoring** - Uptime Kuma + Blackbox Exporter for endpoint monitoring
+
+### 🚦 Quick Monitoring Setup
+```bash
+# Initialize monitoring stack
+./monitoring/scripts/setup-monitoring.sh
+
+# Start monitoring infrastructure
+docker-compose -f monitoring/docker-compose.monitoring.yml up -d
+
+# Access monitoring dashboards
+# - Grafana (Metrics): http://localhost:3000
+# - Kibana (Logs/APM): http://localhost:5601
+# - Jaeger (Tracing): http://localhost:16686
+# - Prometheus: http://localhost:9090
+```
+
+### 📈 Monitoring Features
+- **Application Performance**: Response time, throughput, error rates, Apdex scores
+- **Infrastructure Metrics**: CPU, memory, disk I/O, network traffic, container resources
+- **Log Analysis**: Real-time streaming, structured parsing, error correlation
+- **Distributed Tracing**: Service maps, performance bottlenecks, cross-service correlation
+- **Real User Monitoring**: Page load performance, user interactions, Core Web Vitals
+- **Synthetic Monitoring**: Uptime checks, endpoint probing, SLA monitoring
+
+## 🚨 Alerting & Incident Management
+
+Enterprise-grade alerting and incident response with automation:
+
+### 🔧 Alerting Components
+- **Smart Alerting** (`setup-alerting.sh`) - AlertManager with escalation policies
+- **Incident Management** - Grafana OnCall for automated incident response
+- **Chaos Engineering** - Litmus Chaos for resilience testing
+- **SLO Monitoring** - Pyrra + Sloth for service level objectives
+- **Performance Budgets** - Automated regression detection and alerting
+
+### 🚦 Quick Alerting Setup
+```bash
+# Initialize alerting system
+./alerting/scripts/setup-alerting.sh
+
+# Start alerting infrastructure
+docker-compose -f alerting/docker-compose.alerting.yml up -d
+
+# Access alerting dashboards
+# - AlertManager: http://localhost:9093
+# - Grafana OnCall: http://localhost:8081
+# - Pyrra SLO: http://localhost:9099
+# - Litmus Chaos: http://localhost:9002
+```
+
+### 🎯 Alerting Features
+- **Smart Routing**: P0/P1/P2/P3 incident classification with context-aware routing
+- **Automated Response**: War room creation, escalation chains, timeline tracking
+- **Chaos Engineering**: Scheduled experiments with resilience validation
+- **SLO Monitoring**: Real-time error budget tracking with burn rate alerting
+- **Performance Budgets**: Frontend, backend, and infrastructure regression detection
+- **Security Monitoring**: Runtime threat detection with automated response
+
+## 🚀 CI/CD Pipeline
+
+Advanced CI/CD pipeline with multi-stage deployments and security scanning:
+
+### 🔧 CI/CD Components
+- **Pipeline Orchestration** (`setup-cicd.sh`) - Jenkins + GitLab CE + ArgoCD
+- **Container Registry** - Harbor with integrated security scanning
+- **Code Quality** - SonarQube + OWASP ZAP + Trivy for comprehensive analysis
+- **Feature Flags** - Flagsmith for gradual rollouts and deployment control
+- **Performance Testing** - K6 with automated budget validation
+
+### 🚦 Quick CI/CD Setup
+```bash
+# Initialize CI/CD pipeline
+./cicd/scripts/setup-cicd.sh
+
+# Start CI/CD infrastructure
+docker-compose -f cicd/docker-compose.cicd.yml up -d
+
+# Access CI/CD dashboards
+# - Jenkins: http://localhost:8080
+# - GitLab: http://localhost:8081
+# - ArgoCD: http://localhost:8082
+# - Harbor: http://localhost:8083
+```
+
+### 🎯 CI/CD Features
+- **Multi-Stage Pipeline**: Development → Staging → Production with approval gates
+- **Blue-Green Deployments**: Zero-downtime deployments with instant rollback
+- **Canary Deployments**: Progressive traffic splitting with automated analysis
+- **Security Scanning**: SAST, DAST, container scanning, and IaC validation
+- **Performance Testing**: Automated testing with budget enforcement
+- **Infrastructure as Code**: Terraform validation and automated provisioning
+
+## 🐳 Container & Orchestration
+
+Enterprise container orchestration with Kubernetes, Helm, and service mesh:
+
+### 🔧 Container Components
+- **Container Platform** (`setup-containers.sh`) - Docker + Kubernetes + Helm
+- **Service Mesh** - Istio with mTLS and advanced traffic management
+- **Security Policies** - Pod Security Policies + Network Policies
+- **Autoscaling** - HPA + VPA with predictive scaling capabilities
+- **Ingress Management** - NGINX Ingress + cert-manager for TLS
+
+### 🚦 Quick Container Setup
+```bash
+# Initialize container orchestration
+./containers/scripts/setup-containers.sh
+
+# Deploy applications with Helm
+helm upgrade --install nexus-v3 containers/k8s/helm/nexus-v3/ --namespace nexus-v3-prod
+
+# Access container dashboards
+# - Kubernetes Dashboard: kubectl proxy
+# - Grafana (Metrics): kubectl port-forward svc/prometheus-grafana 3000:80 -n monitoring
+# - Kiali (Service Mesh): kubectl port-forward svc/kiali 20001:20001 -n istio-system
+```
+
+### 🎯 Container Features
+- **Multi-Stage Builds**: Distroless images with security scanning integration
+- **Kubernetes Orchestration**: Production-ready deployments with Helm charts
+- **Security Policies**: Comprehensive Pod Security and Network Policies
+- **Advanced Autoscaling**: HPA + VPA with multi-metric scaling
+- **Service Mesh**: Istio with mTLS, traffic management, and observability
+- **Enterprise Monitoring**: Prometheus, Grafana, Jaeger integration
+
 ## 📚 Documentation
 
 - [Architecture](./docs/architecture.md)
 - [Deployment](./docs/deployment.md)
 - [Contributing](./docs/contributing.md)
-- [Compliance System](./compliance-system-toolkit.md) - **NEW** Comprehensive compliance guide
+- [Compliance System](./compliance-system-toolkit.md) - Comprehensive compliance guide
+- [Monitoring Stack](./MONITORING-STACK-REPORT.md) - **NEW** Complete observability implementation
+- [Alerting & Incident Management](./ALERTING-INCIDENT-MANAGEMENT-REPORT.md) - **NEW** Enterprise alerting system
+- [CI/CD Pipeline](./ADVANCED-CICD-PIPELINE-REPORT.md) - **NEW** Advanced deployment automation
+- [Container Orchestration](./CONTAINER-ORCHESTRATION-REPORT.md) - **NEW** Enterprise Kubernetes platform
 
 ## 🤝 Contributing
 

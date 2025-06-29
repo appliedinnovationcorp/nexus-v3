@@ -1,0 +1,215 @@
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: nexus-v3-restricted
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: security
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'runtime/default'
+    seccomp.security.alpha.kubernetes.io/defaultProfileName: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/defaultProfileName: 'runtime/default'
+spec:
+  # Privilege and access controls
+  privileged: false
+  allowPrivilegeEscalation: false
+  
+  # Required security contexts
+  requiredDropCapabilities:
+    - ALL
+  allowedCapabilities:
+    - NET_BIND_SERVICE
+  
+  # Volume restrictions
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+    - 'csi'
+  
+  # Host restrictions
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  hostPorts: []
+  
+  # User and group restrictions
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  runAsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  
+  # Filesystem restrictions
+  readOnlyRootFilesystem: true
+  allowedHostPaths: []
+  
+  # SELinux
+  seLinux:
+    rule: 'RunAsAny'
+  
+  # Forbidden sysctls
+  forbiddenSysctls:
+    - '*'
+
+---
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: nexus-v3-privileged
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: security
+  annotations:
+    kubernetes.io/description: 'Privileged policy for system components'
+spec:
+  privileged: true
+  allowPrivilegeEscalation: true
+  allowedCapabilities:
+    - '*'
+  volumes:
+    - '*'
+  hostNetwork: true
+  hostPorts:
+    - min: 0
+      max: 65535
+  hostIPC: true
+  hostPID: true
+  runAsUser:
+    rule: 'RunAsAny'
+  seLinux:
+    rule: 'RunAsAny'
+  supplementalGroups:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+
+---
+# ClusterRole for restricted PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nexus-v3-psp-restricted
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: security
+rules:
+  - apiGroups: ['policy']
+    resources: ['podsecuritypolicies']
+    verbs: ['use']
+    resourceNames:
+      - nexus-v3-restricted
+
+---
+# ClusterRole for privileged PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nexus-v3-psp-privileged
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: security
+rules:
+  - apiGroups: ['policy']
+    resources: ['podsecuritypolicies']
+    verbs: ['use']
+    resourceNames:
+      - nexus-v3-privileged
+
+---
+# ClusterRoleBinding for application pods
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nexus-v3-psp-restricted
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: security
+roleRef:
+  kind: ClusterRole
+  name: nexus-v3-psp-restricted
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: nexus-v3
+    namespace: nexus-v3-dev
+  - kind: ServiceAccount
+    name: nexus-v3
+    namespace: nexus-v3-staging
+  - kind: ServiceAccount
+    name: nexus-v3
+    namespace: nexus-v3-prod
+
+---
+# ClusterRoleBinding for system components
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nexus-v3-psp-privileged
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: security
+roleRef:
+  kind: ClusterRole
+  name: nexus-v3-psp-privileged
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: nexus-v3-system
+    namespace: kube-system
+  - kind: ServiceAccount
+    name: nexus-v3-monitoring
+    namespace: monitoring
+
+---
+# Pod Security Standards (PSS) - Restricted
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-v3-prod
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: namespace
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-v3-staging
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: namespace
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-v3-dev
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: namespace

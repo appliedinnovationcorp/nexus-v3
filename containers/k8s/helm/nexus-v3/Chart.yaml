@@ -1,0 +1,54 @@
+apiVersion: v2
+name: nexus-v3
+description: Enterprise-grade Nexus V3 application with comprehensive Kubernetes orchestration
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://nexus-v3.local
+sources:
+  - https://github.com/appliedinnovationcorp/nexus-v3
+maintainers:
+  - name: Platform Team
+    email: platform-team@nexus-v3.local
+    url: https://nexus-v3.local/team/platform
+keywords:
+  - nexus-v3
+  - enterprise
+  - kubernetes
+  - microservices
+  - cloud-native
+annotations:
+  category: Application
+  licenses: MIT
+  images: |
+    - name: nexus-v3-app
+      image: harbor.nexus-v3.local/nexus-v3/nexus-v3-app:1.0.0
+    - name: nginx
+      image: nginx:alpine
+    - name: redis
+      image: redis:7-alpine
+dependencies:
+  - name: postgresql
+    version: "12.12.10"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: "18.4.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: nginx-ingress
+    version: "4.8.3"
+    repository: https://kubernetes.github.io/ingress-nginx
+    condition: ingress.enabled
+  - name: cert-manager
+    version: "1.13.3"
+    repository: https://charts.jetstack.io
+    condition: certManager.enabled
+  - name: prometheus
+    version: "25.8.0"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: monitoring.prometheus.enabled
+  - name: grafana
+    version: "7.0.19"
+    repository: https://grafana.github.io/helm-charts
+    condition: monitoring.grafana.enabled

@@ -1,0 +1,430 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-v3-app-netpol
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nexus-v3
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+    
+    # Allow traffic from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+    
+    # Allow traffic from same namespace (inter-pod communication)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nexus-v3
+      ports:
+        - protocol: TCP
+          port: 3000
+    
+    # Allow traffic from service mesh (Istio)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+      ports:
+        - protocol: TCP
+          port: 15090
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    
+    # Allow access to database namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: database
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    
+    # Allow HTTPS traffic for external APIs
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+    
+    # Allow access to Kubernetes API server
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: TCP
+          port: 443
+    
+    # Allow service mesh communication
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+      ports:
+        - protocol: TCP
+          port: 15010
+        - protocol: TCP
+          port: 15011
+        - protocol: TCP
+          port: 15012
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-v3-database-netpol
+  namespace: database
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: database
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from application namespaces
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: nexus-v3-prod
+        - namespaceSelector:
+            matchLabels:
+              name: nexus-v3-staging
+        - namespaceSelector:
+            matchLabels:
+              name: nexus-v3-dev
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    
+    # Allow traffic from monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 9187
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow database replication (if needed)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: database
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-v3-monitoring-netpol
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+    
+    # Allow inter-monitoring communication
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9093
+        - protocol: TCP
+          port: 9094
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow scraping from all namespaces
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 10254
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-v3-ingress-netpol
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow all inbound traffic (internet-facing)
+    - {}
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow traffic to application namespaces
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: nexus-v3-prod
+        - namespaceSelector:
+            matchLabels:
+              name: nexus-v3-staging
+        - namespaceSelector:
+            matchLabels:
+              name: nexus-v3-dev
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 8080
+    
+    # Allow traffic to monitoring
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-v3-istio-netpol
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from all namespaces for service mesh
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 15010
+        - protocol: TCP
+          port: 15011
+        - protocol: TCP
+          port: 15012
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 15014
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow traffic to all namespaces for service mesh
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 15010
+        - protocol: TCP
+          port: 15011
+        - protocol: TCP
+          port: 15012
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-default
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+---
+# Cilium Network Policy (if using Cilium CNI)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: nexus-v3-l7-policy
+  namespace: nexus-v3-prod
+  labels:
+    app.kubernetes.io/name: nexus-v3
+    app.kubernetes.io/component: network-security
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: nexus-v3
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: ingress-nginx
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+          rules:
+            http:
+              - method: "GET"
+                path: "/health"
+              - method: "GET"
+                path: "/ready"
+              - method: "GET"
+                path: "/metrics"
+              - method: "GET"
+                path: "/api/.*"
+              - method: "POST"
+                path: "/api/.*"
+              - method: "PUT"
+                path: "/api/.*"
+              - method: "DELETE"
+                path: "/api/.*"
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/component: database
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+        - ports:
+            - port: "6379"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: "api.external-service.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+          rules:
+            http:
+              - method: "GET"
+              - method: "POST"
