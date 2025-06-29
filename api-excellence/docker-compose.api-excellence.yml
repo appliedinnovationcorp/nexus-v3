@@ -1,0 +1,446 @@
+version: '3.8'
+
+services:
+  # Apollo Federation Gateway
+  apollo-gateway:
+    build:
+      context: ./docker/apollo-gateway
+      dockerfile: Dockerfile
+    container_name: nexus-apollo-gateway
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config/apollo-gateway.js:/app/config/apollo-gateway.js
+      - ./graphql/schemas:/app/schemas
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/api-excellence
+      - USERS_SERVICE_URL=http://graphql-users-service:4001
+      - PRODUCTS_SERVICE_URL=http://graphql-products-service:4002
+      - ORDERS_SERVICE_URL=http://graphql-orders-service:4003
+    depends_on:
+      - redis-api
+      - mongodb-api
+      - graphql-users-service
+      - graphql-products-service
+      - graphql-orders-service
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # GraphQL Users Service
+  graphql-users-service:
+    build:
+      context: ./docker/graphql-users-service
+      dockerfile: Dockerfile
+    container_name: nexus-graphql-users-service
+    ports:
+      - "4001:4001"
+    volumes:
+      - ./graphql/users:/app/src
+      - ./config/users-service.json:/app/config/service.json
+    environment:
+      - NODE_ENV=production
+      - PORT=4001
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/users
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # GraphQL Products Service
+  graphql-products-service:
+    build:
+      context: ./docker/graphql-products-service
+      dockerfile: Dockerfile
+    container_name: nexus-graphql-products-service
+    ports:
+      - "4002:4002"
+    volumes:
+      - ./graphql/products:/app/src
+      - ./config/products-service.json:/app/config/service.json
+    environment:
+      - NODE_ENV=production
+      - PORT=4002
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/products
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # GraphQL Orders Service
+  graphql-orders-service:
+    build:
+      context: ./docker/graphql-orders-service
+      dockerfile: Dockerfile
+    container_name: nexus-graphql-orders-service
+    ports:
+      - "4003:4003"
+    volumes:
+      - ./graphql/orders:/app/src
+      - ./config/orders-service.json:/app/config/service.json
+    environment:
+      - NODE_ENV=production
+      - PORT=4003
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/orders
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # REST API Gateway
+  rest-api-gateway:
+    build:
+      context: ./docker/rest-api-gateway
+      dockerfile: Dockerfile
+    container_name: nexus-rest-api-gateway
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/rest-gateway.json:/app/config/gateway.json
+      - ./rest/openapi:/app/openapi
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/api-excellence
+      - USERS_API_URL=http://rest-users-api:3001
+      - PRODUCTS_API_URL=http://rest-products-api:3002
+      - ORDERS_API_URL=http://rest-orders-api:3003
+    depends_on:
+      - redis-api
+      - mongodb-api
+      - rest-users-api
+      - rest-products-api
+      - rest-orders-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # REST Users API
+  rest-users-api:
+    build:
+      context: ./docker/rest-users-api
+      dockerfile: Dockerfile
+    container_name: nexus-rest-users-api
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./rest/users:/app/src
+      - ./config/users-api.json:/app/config/api.json
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/users
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # REST Products API
+  rest-products-api:
+    build:
+      context: ./docker/rest-products-api
+      dockerfile: Dockerfile
+    container_name: nexus-rest-products-api
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./rest/products:/app/src
+      - ./config/products-api.json:/app/config/api.json
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/products
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # REST Orders API
+  rest-orders-api:
+    build:
+      context: ./docker/rest-orders-api
+      dockerfile: Dockerfile
+    container_name: nexus-rest-orders-api
+    ports:
+      - "3003:3003"
+    volumes:
+      - ./rest/orders:/app/src
+      - ./config/orders-api.json:/app/config/api.json
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/orders
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # Webhook Service
+  webhook-service:
+    build:
+      context: ./docker/webhook-service
+      dockerfile: Dockerfile
+    container_name: nexus-webhook-service
+    ports:
+      - "3100:3000"
+    volumes:
+      - ./config/webhook-config.json:/app/config/webhook.json
+      - ./webhooks:/app/webhooks
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/webhooks
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # Real-time Subscriptions Service
+  subscriptions-service:
+    build:
+      context: ./docker/subscriptions-service
+      dockerfile: Dockerfile
+    container_name: nexus-subscriptions-service
+    ports:
+      - "3200:3000"
+      - "3201:3001"
+    volumes:
+      - ./config/subscriptions-config.json:/app/config/subscriptions.json
+      - ./subscriptions:/app/subscriptions
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/subscriptions
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # API Analytics Service
+  api-analytics:
+    build:
+      context: ./docker/api-analytics
+      dockerfile: Dockerfile
+    container_name: nexus-api-analytics
+    ports:
+      - "3300:3000"
+    volumes:
+      - ./config/analytics-config.json:/app/config/analytics.json
+      - ./analytics:/app/analytics
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/analytics
+      - ELASTICSEARCH_URL=http://elasticsearch-api:9200
+    depends_on:
+      - redis-api
+      - mongodb-api
+      - elasticsearch-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # Rate Limiting Service
+  rate-limiter:
+    build:
+      context: ./docker/rate-limiter
+      dockerfile: Dockerfile
+    container_name: nexus-rate-limiter
+    ports:
+      - "3400:3000"
+    volumes:
+      - ./config/rate-limiter-config.json:/app/config/rate-limiter.json
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/rate-limiter
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # API Documentation Service
+  api-docs:
+    build:
+      context: ./docker/api-docs
+      dockerfile: Dockerfile
+    container_name: nexus-api-docs
+    ports:
+      - "3500:3000"
+    volumes:
+      - ./documentation:/app/docs
+      - ./rest/openapi:/app/openapi
+      - ./graphql/schemas:/app/graphql
+    environment:
+      - NODE_ENV=production
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # API Testing Service
+  api-testing:
+    build:
+      context: ./docker/api-testing
+      dockerfile: Dockerfile
+    container_name: nexus-api-testing
+    ports:
+      - "3600:3000"
+    volumes:
+      - ./testing:/app/tests
+      - ./config/testing-config.json:/app/config/testing.json
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-api:6379
+      - MONGODB_URL=mongodb://mongodb-api:27017/testing
+    depends_on:
+      - redis-api
+      - mongodb-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # Redis for API Caching
+  redis-api:
+    image: redis:7-alpine
+    container_name: nexus-redis-api
+    ports:
+      - "6382:6379"
+    volumes:
+      - ./config/redis-api.conf:/usr/local/etc/redis/redis.conf
+      - redis-api-data:/data
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # MongoDB for API Data
+  mongodb-api:
+    image: mongo:7
+    container_name: nexus-mongodb-api
+    ports:
+      - "27019:27017"
+    volumes:
+      - ./config/mongodb-api.conf:/etc/mongod.conf
+      - mongodb-api-data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=api
+      - MONGO_INITDB_ROOT_PASSWORD=api123
+      - MONGO_INITDB_DATABASE=api-excellence
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # ElasticSearch for API Analytics
+  elasticsearch-api:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: nexus-elasticsearch-api
+    ports:
+      - "9203:9200"
+      - "9303:9300"
+    volumes:
+      - elasticsearch-api-data:/usr/share/elasticsearch/data
+      - ./config/elasticsearch-api.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # Kibana for API Analytics
+  kibana-api:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: nexus-kibana-api
+    ports:
+      - "5604:5601"
+    volumes:
+      - ./config/kibana-api.yml:/usr/share/kibana/config/kibana.yml
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch-api:9200
+    depends_on:
+      - elasticsearch-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # Prometheus for API Monitoring
+  prometheus-api:
+    image: prom/prometheus:latest
+    container_name: nexus-prometheus-api
+    ports:
+      - "9097:9090"
+    volumes:
+      - ./config/prometheus-api.yml:/etc/prometheus/prometheus.yml
+      - prometheus-api-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - api-network
+    restart: unless-stopped
+
+  # Grafana for API Visualization
+  grafana-api:
+    image: grafana/grafana:latest
+    container_name: nexus-grafana-api
+    ports:
+      - "3312:3000"
+    volumes:
+      - ./config/grafana-api.ini:/etc/grafana/grafana.ini
+      - ./config/grafana-dashboards:/var/lib/grafana/dashboards
+      - ./config/grafana-provisioning:/etc/grafana/provisioning
+      - grafana-api-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=api123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-worldmap-panel,grafana-piechart-panel
+    depends_on:
+      - prometheus-api
+    networks:
+      - api-network
+    restart: unless-stopped
+
+volumes:
+  redis-api-data:
+  mongodb-api-data:
+  elasticsearch-api-data:
+  prometheus-api-data:
+  grafana-api-data:
+
+networks:
+  api-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.27.0.0/16
