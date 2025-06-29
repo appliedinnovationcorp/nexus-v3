@@ -1,0 +1,359 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: nexus-v3-canary
+  namespace: nexus-v3-prod
+  labels:
+    app: nexus-v3
+    deployment-strategy: canary
+spec:
+  replicas: 5
+  strategy:
+    canary:
+      # Canary deployment configuration
+      canaryService: nexus-v3-canary-service
+      stableService: nexus-v3-stable-service
+      
+      # Traffic routing
+      trafficRouting:
+        istio:
+          virtualService:
+            name: nexus-v3-vs
+            routes:
+              - primary
+          destinationRule:
+            name: nexus-v3-dr
+            canarySubsetName: canary
+            stableSubsetName: stable
+            
+      # Canary steps with automated analysis
+      steps:
+        # Step 1: 10% traffic for 2 minutes
+        - setWeight: 10
+        - pause:
+            duration: 2m
+            
+        # Step 2: Run analysis and increase to 25%
+        - analysis:
+            templates:
+              - templateName: success-rate
+              - templateName: latency-p99
+            args:
+              - name: service-name
+                value: nexus-v3-canary-service
+        - setWeight: 25
+        - pause:
+            duration: 5m
+            
+        # Step 3: Increase to 50% with extended analysis
+        - analysis:
+            templates:
+              - templateName: success-rate
+              - templateName: latency-p99
+              - templateName: error-rate
+            args:
+              - name: service-name
+                value: nexus-v3-canary-service
+        - setWeight: 50
+        - pause:
+            duration: 10m
+            
+        # Step 4: Final analysis before full rollout
+        - analysis:
+            templates:
+              - templateName: success-rate
+              - templateName: latency-p99
+              - templateName: error-rate
+              - templateName: business-metrics
+            args:
+              - name: service-name
+                value: nexus-v3-canary-service
+        - setWeight: 75
+        - pause:
+            duration: 5m
+            
+        # Step 5: Complete rollout
+        - setWeight: 100
+        
+      # Analysis configuration
+      analysis:
+        templates:
+          - templateName: success-rate
+          - templateName: latency-p99
+        args:
+          - name: service-name
+            value: nexus-v3-canary-service
+            
+      # Automatic rollback configuration
+      abortScaleDownDelaySeconds: 30
+      scaleDownDelaySeconds: 30
+      
+  selector:
+    matchLabels:
+      app: nexus-v3
+      
+  template:
+    metadata:
+      labels:
+        app: nexus-v3
+        version: canary
+    spec:
+      containers:
+        - name: nexus-v3
+          image: harbor.nexus-v3.local/nexus-v3-app:latest
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: DEPLOYMENT_STRATEGY
+              value: "canary"
+            - name: FLAGSMITH_ENVIRONMENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith-config
+                  key: environment-key
+                  
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+            
+          # Resource limits
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+              
+          # Security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+                
+---
+# Canary Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-v3-canary-service
+  namespace: nexus-v3-prod
+  labels:
+    app: nexus-v3
+    service-type: canary
+spec:
+  selector:
+    app: nexus-v3
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  type: ClusterIP
+  
+---
+# Stable Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-v3-stable-service
+  namespace: nexus-v3-prod
+  labels:
+    app: nexus-v3
+    service-type: stable
+spec:
+  selector:
+    app: nexus-v3
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  type: ClusterIP
+  
+---
+# Analysis Templates for Canary Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: nexus-v3-prod
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: success-rate
+      interval: 30s
+      count: 10
+      successCondition: result[0] >= 0.95
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}",code!~"5.."}[2m])) /
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
+            
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: latency-p99
+  namespace: nexus-v3-prod
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: latency-p99
+      interval: 30s
+      count: 10
+      successCondition: result[0] <= 0.5
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            histogram_quantile(0.99, 
+              sum(rate(http_request_duration_seconds_bucket{service="{{args.service-name}}"}[2m])) by (le)
+            )
+            
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: error-rate
+  namespace: nexus-v3-prod
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: error-rate
+      interval: 30s
+      count: 10
+      successCondition: result[0] <= 0.01
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}",code=~"5.."}[2m])) /
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
+            
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: business-metrics
+  namespace: nexus-v3-prod
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: conversion-rate
+      interval: 60s
+      count: 5
+      successCondition: result[0] >= 0.02
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            sum(rate(checkout_completed_total{service="{{args.service-name}}"}[5m])) /
+            sum(rate(checkout_started_total{service="{{args.service-name}}"}[5m]))
+            
+    - name: user-satisfaction
+      interval: 60s
+      count: 5
+      successCondition: result[0] >= 4.0
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            avg(user_satisfaction_score{service="{{args.service-name}}"})
+            
+---
+# Istio VirtualService for traffic splitting
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: nexus-v3-vs
+  namespace: nexus-v3-prod
+spec:
+  hosts:
+    - nexus-v3.prod.local
+  http:
+    - name: primary
+      match:
+        - headers:
+            canary:
+              exact: "true"
+      route:
+        - destination:
+            host: nexus-v3-canary-service
+            port:
+              number: 80
+          weight: 100
+    - name: primary
+      route:
+        - destination:
+            host: nexus-v3-stable-service
+            port:
+              number: 80
+          weight: 100
+        - destination:
+            host: nexus-v3-canary-service
+            port:
+              number: 80
+          weight: 0
+          
+---
+# Istio DestinationRule for subset configuration
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: nexus-v3-dr
+  namespace: nexus-v3-prod
+spec:
+  host: nexus-v3-service
+  subsets:
+    - name: stable
+      labels:
+        version: stable
+    - name: canary
+      labels:
+        version: canary
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        maxRequestsPerConnection: 10
+    loadBalancer:
+      simple: LEAST_CONN
+    outlierDetection:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s

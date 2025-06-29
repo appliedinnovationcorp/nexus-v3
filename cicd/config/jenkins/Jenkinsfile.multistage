@@ -1,0 +1,713 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Application configuration
+        APP_NAME = 'nexus-v3-app'
+        APP_VERSION = "${BUILD_NUMBER}"
+        DOCKER_REGISTRY = 'harbor.nexus-v3.local'
+        
+        // Environment configurations
+        DEV_NAMESPACE = 'nexus-v3-dev'
+        STAGING_NAMESPACE = 'nexus-v3-staging'
+        PROD_NAMESPACE = 'nexus-v3-prod'
+        
+        // Tool configurations
+        SONARQUBE_URL = 'http://sonarqube:9000'
+        TRIVY_SERVER = 'http://trivy:4954'
+        ZAP_URL = 'http://zap:8080'
+        FLAGSMITH_URL = 'http://flagsmith:8000'
+        
+        // Deployment strategies
+        DEPLOYMENT_STRATEGY = 'blue-green' // blue-green, canary, rolling
+        CANARY_PERCENTAGE = '10'
+        
+        // Quality gates
+        SONAR_QUALITY_GATE = 'true'
+        SECURITY_SCAN_REQUIRED = 'true'
+        PERFORMANCE_TEST_REQUIRED = 'true'
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+    }
+    
+    stages {
+        stage('Checkout & Setup') {
+            steps {
+                script {
+                    // Checkout code
+                    checkout scm
+                    
+                    // Set build metadata
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    
+                    env.BUILD_TAG = "${APP_NAME}:${APP_VERSION}-${GIT_COMMIT_SHORT}"
+                    
+                    // Notify build start
+                    notifySlack("🚀 Build Started", "Build #${BUILD_NUMBER} for ${APP_NAME}", "good")
+                }
+            }
+        }
+        
+        stage('Code Quality Analysis') {
+            parallel {
+                stage('SonarQube Analysis') {
+                    when {
+                        environment name: 'SONAR_QUALITY_GATE', value: 'true'
+                    }
+                    steps {
+                        script {
+                            withSonarQubeEnv('SonarQube') {
+                                sh '''
+                                    sonar-scanner \
+                                        -Dsonar.projectKey=${APP_NAME} \
+                                        -Dsonar.projectName=${APP_NAME} \
+                                        -Dsonar.projectVersion=${APP_VERSION} \
+                                        -Dsonar.sources=. \
+                                        -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/** \
+                                        -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+                                        -Dsonar.typescript.lcov.reportPaths=coverage/lcov.info
+                                '''
+                            }
+                            
+                            // Wait for quality gate
+                            timeout(time: 10, unit: 'MINUTES') {
+                                def qg = waitForQualityGate()
+                                if (qg.status != 'OK') {
+                                    error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                stage('Lint & Format Check') {
+                    steps {
+                        sh '''
+                            # ESLint for JavaScript/TypeScript
+                            npm run lint
+                            
+                            # Prettier format check
+                            npm run format:check
+                            
+                            # Additional language-specific linting
+                            if [ -f "requirements.txt" ]; then
+                                flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+                                black --check .
+                            fi
+                            
+                            if [ -f "go.mod" ]; then
+                                golangci-lint run
+                                gofmt -l .
+                            fi
+                        '''
+                    }
+                }
+                
+                stage('Dependency Security Scan') {
+                    steps {
+                        sh '''
+                            # npm audit for Node.js
+                            if [ -f "package.json" ]; then
+                                npm audit --audit-level=high
+                                npm run audit:fix || true
+                            fi
+                            
+                            # Safety for Python
+                            if [ -f "requirements.txt" ]; then
+                                safety check -r requirements.txt
+                            fi
+                            
+                            # Go mod security check
+                            if [ -f "go.mod" ]; then
+                                go list -json -deps ./... | nancy sleuth
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Build & Test') {
+            parallel {
+                stage('Unit Tests') {
+                    steps {
+                        sh '''
+                            # Run unit tests with coverage
+                            npm run test:unit -- --coverage
+                            
+                            # Generate test reports
+                            npm run test:report
+                        '''
+                        
+                        // Publish test results
+                        publishTestResults testResultsPattern: 'test-results.xml'
+                        publishCoverage adapters: [
+                            istanbulCoberturaAdapter('coverage/cobertura-coverage.xml')
+                        ], sourceFileResolver: sourceFiles('STORE_LAST_BUILD')
+                    }
+                }
+                
+                stage('Integration Tests') {
+                    steps {
+                        sh '''
+                            # Start test dependencies
+                            docker-compose -f docker-compose.test.yml up -d
+                            
+                            # Wait for services to be ready
+                            ./scripts/wait-for-services.sh
+                            
+                            # Run integration tests
+                            npm run test:integration
+                            
+                            # Cleanup
+                            docker-compose -f docker-compose.test.yml down
+                        '''
+                    }
+                }
+                
+                stage('Build Application') {
+                    steps {
+                        sh '''
+                            # Build application
+                            npm run build
+                            
+                            # Build Docker image
+                            docker build -t ${BUILD_TAG} .
+                            
+                            # Tag for registry
+                            docker tag ${BUILD_TAG} ${DOCKER_REGISTRY}/${BUILD_TAG}
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Security Scanning') {
+            when {
+                environment name: 'SECURITY_SCAN_REQUIRED', value: 'true'
+            }
+            parallel {
+                stage('Container Security Scan') {
+                    steps {
+                        script {
+                            // Trivy container scan
+                            sh """
+                                trivy image --server ${TRIVY_SERVER} \
+                                    --format json \
+                                    --output trivy-report.json \
+                                    --severity HIGH,CRITICAL \
+                                    ${BUILD_TAG}
+                            """
+                            
+                            // Parse results and fail if critical vulnerabilities found
+                            def trivyReport = readJSON file: 'trivy-report.json'
+                            def criticalVulns = trivyReport.Results?.findAll { 
+                                it.Vulnerabilities?.any { vuln -> vuln.Severity == 'CRITICAL' }
+                            }
+                            
+                            if (criticalVulns) {
+                                error "Critical vulnerabilities found in container image"
+                            }
+                        }
+                    }
+                }
+                
+                stage('SAST Scan') {
+                    steps {
+                        sh '''
+                            # Semgrep static analysis
+                            semgrep --config=auto --json --output=semgrep-report.json .
+                            
+                            # Bandit for Python security issues
+                            if [ -f "requirements.txt" ]; then
+                                bandit -r . -f json -o bandit-report.json || true
+                            fi
+                        '''
+                    }
+                }
+                
+                stage('Infrastructure Security Scan') {
+                    steps {
+                        sh '''
+                            # Checkov for IaC security
+                            checkov -d . --framework terraform,kubernetes,dockerfile \
+                                --output json --output-file checkov-report.json || true
+                            
+                            # Terrascan for Terraform security
+                            if [ -d "terraform" ]; then
+                                terrascan scan -t terraform -d terraform/ \
+                                    --output json --output-file terrascan-report.json || true
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Infrastructure as Code Validation') {
+            parallel {
+                stage('Terraform Validation') {
+                    when {
+                        changeset "terraform/**"
+                    }
+                    steps {
+                        dir('terraform') {
+                            sh '''
+                                # Terraform format check
+                                terraform fmt -check -recursive
+                                
+                                # Terraform validation
+                                terraform init -backend=false
+                                terraform validate
+                                
+                                # Terraform plan
+                                terraform plan -out=tfplan
+                                
+                                # Terraform security scan
+                                tfsec . --format json --out tfsec-report.json || true
+                            '''
+                        }
+                    }
+                }
+                
+                stage('Kubernetes Manifest Validation') {
+                    when {
+                        changeset "k8s/**"
+                    }
+                    steps {
+                        sh '''
+                            # Kubeval for Kubernetes manifest validation
+                            find k8s/ -name "*.yaml" -o -name "*.yml" | xargs kubeval
+                            
+                            # Kustomize build validation
+                            if [ -f "k8s/kustomization.yaml" ]; then
+                                kustomize build k8s/ > /dev/null
+                            fi
+                            
+                            # Helm chart validation
+                            if [ -f "helm/Chart.yaml" ]; then
+                                helm lint helm/
+                                helm template helm/ > /dev/null
+                            fi
+                        '''
+                    }
+                }
+                
+                stage('Policy Validation') {
+                    steps {
+                        sh '''
+                            # OPA policy validation
+                            if [ -d "policies" ]; then
+                                opa test policies/
+                                opa fmt --diff policies/
+                            fi
+                            
+                            # Conftest policy testing
+                            if [ -f "policy/policy.rego" ]; then
+                                conftest verify --policy policy/ k8s/
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Push Artifacts') {
+            steps {
+                script {
+                    // Push Docker image to registry
+                    withCredentials([usernamePassword(
+                        credentialsId: 'harbor-registry',
+                        usernameVariable: 'REGISTRY_USER',
+                        passwordVariable: 'REGISTRY_PASS'
+                    )]) {
+                        sh '''
+                            echo $REGISTRY_PASS | docker login $DOCKER_REGISTRY -u $REGISTRY_USER --password-stdin
+                            docker push ${DOCKER_REGISTRY}/${BUILD_TAG}
+                            
+                            # Tag as latest for dev
+                            docker tag ${BUILD_TAG} ${DOCKER_REGISTRY}/${APP_NAME}:latest-dev
+                            docker push ${DOCKER_REGISTRY}/${APP_NAME}:latest-dev
+                        '''
+                    }
+                    
+                    // Store build metadata
+                    writeJSON file: 'build-metadata.json', json: [
+                        appName: env.APP_NAME,
+                        version: env.APP_VERSION,
+                        gitCommit: env.GIT_COMMIT_SHORT,
+                        buildTag: env.BUILD_TAG,
+                        buildTime: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                        buildUrl: env.BUILD_URL
+                    ]
+                    
+                    archiveArtifacts artifacts: 'build-metadata.json', fingerprint: true
+                }
+            }
+        }
+        
+        stage('Deploy to Development') {
+            steps {
+                script {
+                    deployToEnvironment('dev', env.DEV_NAMESPACE, 'rolling')
+                    
+                    // Run smoke tests
+                    runSmokeTests('dev')
+                }
+            }
+        }
+        
+        stage('Performance Testing') {
+            when {
+                environment name: 'PERFORMANCE_TEST_REQUIRED', value: 'true'
+            }
+            steps {
+                script {
+                    // Run K6 performance tests
+                    sh '''
+                        k6 run --out json=k6-results.json \
+                            --env BASE_URL=http://nexus-v3-dev.local \
+                            scripts/performance-test.js
+                    '''
+                    
+                    // Parse results and validate performance budgets
+                    def k6Results = readJSON file: 'k6-results.json'
+                    validatePerformanceBudgets(k6Results)
+                }
+            }
+        }
+        
+        stage('DAST Security Testing') {
+            when {
+                environment name: 'SECURITY_SCAN_REQUIRED', value: 'true'
+            }
+            steps {
+                script {
+                    // OWASP ZAP dynamic security testing
+                    sh """
+                        # Start ZAP daemon
+                        zap-cli start --start-options '-config api.disablekey=true'
+                        
+                        # Spider the application
+                        zap-cli spider http://nexus-v3-dev.local
+                        
+                        # Active scan
+                        zap-cli active-scan http://nexus-v3-dev.local
+                        
+                        # Generate report
+                        zap-cli report -o zap-report.html -f html
+                        zap-cli report -o zap-report.json -f json
+                        
+                        # Shutdown ZAP
+                        zap-cli shutdown
+                    """
+                    
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: '.',
+                        reportFiles: 'zap-report.html',
+                        reportName: 'ZAP Security Report'
+                    ])
+                }
+            }
+        }
+        
+        stage('Deploy to Staging') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'release/*'
+                }
+            }
+            steps {
+                script {
+                    // Deploy with blue-green strategy
+                    deployToEnvironment('staging', env.STAGING_NAMESPACE, 'blue-green')
+                    
+                    // Run comprehensive tests
+                    runIntegrationTests('staging')
+                    runE2ETests('staging')
+                }
+            }
+        }
+        
+        stage('Staging Validation') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'release/*'
+                }
+            }
+            parallel {
+                stage('Automated Testing') {
+                    steps {
+                        sh '''
+                            # Run full test suite against staging
+                            npm run test:e2e -- --env=staging
+                            
+                            # API contract testing
+                            npm run test:contract -- --env=staging
+                            
+                            # Load testing
+                            k6 run --env BASE_URL=http://nexus-v3-staging.local \
+                                scripts/load-test.js
+                        '''
+                    }
+                }
+                
+                stage('Manual Approval Gate') {
+                    steps {
+                        script {
+                            // Feature flag check for production readiness
+                            def prodReady = checkFeatureFlag('production-deployment-ready')
+                            
+                            if (!prodReady) {
+                                echo "Production deployment blocked by feature flag"
+                                currentBuild.result = 'ABORTED'
+                                return
+                            }
+                            
+                            // Manual approval for production deployment
+                            timeout(time: 24, unit: 'HOURS') {
+                                input message: 'Deploy to Production?', 
+                                      ok: 'Deploy',
+                                      submitterParameter: 'APPROVER'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to Production') {
+            when {
+                allOf {
+                    anyOf {
+                        branch 'main'
+                        branch 'release/*'
+                    }
+                    not { changeRequest() }
+                }
+            }
+            steps {
+                script {
+                    // Check deployment strategy
+                    def strategy = env.DEPLOYMENT_STRATEGY ?: 'blue-green'
+                    
+                    switch(strategy) {
+                        case 'canary':
+                            deployCanary(env.PROD_NAMESPACE)
+                            break
+                        case 'blue-green':
+                            deployBlueGreen(env.PROD_NAMESPACE)
+                            break
+                        default:
+                            deployRolling(env.PROD_NAMESPACE)
+                    }
+                    
+                    // Post-deployment validation
+                    runProductionValidation()
+                }
+            }
+        }
+        
+        stage('Post-Deployment Monitoring') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'release/*'
+                }
+            }
+            steps {
+                script {
+                    // Monitor deployment health
+                    monitorDeploymentHealth(env.PROD_NAMESPACE, 10) // 10 minutes
+                    
+                    // Update feature flags for gradual rollout
+                    if (env.DEPLOYMENT_STRATEGY == 'canary') {
+                        scheduleCanaryProgression()
+                    }
+                    
+                    // Notify success
+                    notifySlack("✅ Deployment Successful", 
+                              "Build #${BUILD_NUMBER} deployed to production", 
+                              "good")
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Cleanup
+            sh 'docker system prune -f || true'
+            
+            // Archive reports
+            archiveArtifacts artifacts: '**/*-report.*', allowEmptyArchive: true
+            
+            // Publish test results
+            publishTestResults testResultsPattern: '**/test-results.xml'
+        }
+        
+        failure {
+            script {
+                // Rollback if production deployment failed
+                if (env.STAGE_NAME?.contains('Production')) {
+                    rollbackDeployment(env.PROD_NAMESPACE)
+                }
+                
+                // Notify failure
+                notifySlack("❌ Build Failed", 
+                          "Build #${BUILD_NUMBER} failed at stage: ${env.STAGE_NAME}", 
+                          "danger")
+            }
+        }
+        
+        success {
+            // Update deployment metrics
+            updateDeploymentMetrics()
+            
+            // Trigger downstream jobs if needed
+            if (env.BRANCH_NAME == 'main') {
+                build job: 'update-documentation', wait: false
+            }
+        }
+        
+        unstable {
+            notifySlack("⚠️ Build Unstable", 
+                      "Build #${BUILD_NUMBER} completed with warnings", 
+                      "warning")
+        }
+    }
+}
+
+// Helper functions
+def deployToEnvironment(env, namespace, strategy) {
+    echo "Deploying to ${env} environment using ${strategy} strategy"
+    
+    sh """
+        # Update Kubernetes manifests
+        sed -i 's|IMAGE_TAG|${BUILD_TAG}|g' k8s/${env}/*.yaml
+        
+        # Apply manifests
+        kubectl apply -f k8s/${env}/ -n ${namespace}
+        
+        # Wait for rollout
+        kubectl rollout status deployment/${APP_NAME} -n ${namespace} --timeout=300s
+    """
+}
+
+def deployCanary(namespace) {
+    echo "Starting canary deployment to ${namespace}"
+    
+    sh """
+        # Create canary deployment using Argo Rollouts
+        kubectl apply -f k8s/prod/rollout-canary.yaml -n ${namespace}
+        
+        # Start canary with ${CANARY_PERCENTAGE}% traffic
+        kubectl argo rollouts set image ${APP_NAME} ${APP_NAME}=${DOCKER_REGISTRY}/${BUILD_TAG} -n ${namespace}
+        
+        # Wait for canary analysis
+        kubectl argo rollouts get rollout ${APP_NAME} -n ${namespace} --watch
+    """
+}
+
+def deployBlueGreen(namespace) {
+    echo "Starting blue-green deployment to ${namespace}"
+    
+    sh """
+        # Create blue-green deployment using Argo Rollouts
+        kubectl apply -f k8s/prod/rollout-bluegreen.yaml -n ${namespace}
+        
+        # Update image
+        kubectl argo rollouts set image ${APP_NAME} ${APP_NAME}=${DOCKER_REGISTRY}/${BUILD_TAG} -n ${namespace}
+        
+        # Promote after validation
+        sleep 60
+        kubectl argo rollouts promote ${APP_NAME} -n ${namespace}
+    """
+}
+
+def rollbackDeployment(namespace) {
+    echo "Rolling back deployment in ${namespace}"
+    
+    sh """
+        # Rollback using Argo Rollouts
+        kubectl argo rollouts undo ${APP_NAME} -n ${namespace}
+        
+        # Wait for rollback to complete
+        kubectl argo rollouts get rollout ${APP_NAME} -n ${namespace} --watch
+    """
+}
+
+def checkFeatureFlag(flagName) {
+    def response = sh(
+        script: "curl -s ${FLAGSMITH_URL}/api/v1/flags/${flagName}/",
+        returnStdout: true
+    )
+    def flag = readJSON text: response
+    return flag.enabled
+}
+
+def notifySlack(title, message, color) {
+    if (env.SLACK_WEBHOOK) {
+        sh """
+            curl -X POST -H 'Content-type: application/json' \
+                --data '{"text":"${title}","attachments":[{"color":"${color}","text":"${message}"}]}' \
+                ${SLACK_WEBHOOK}
+        """
+    }
+}
+
+def runSmokeTests(environment) {
+    sh "npm run test:smoke -- --env=${environment}"
+}
+
+def runIntegrationTests(environment) {
+    sh "npm run test:integration -- --env=${environment}"
+}
+
+def runE2ETests(environment) {
+    sh "npm run test:e2e -- --env=${environment}"
+}
+
+def validatePerformanceBudgets(results) {
+    // Implement performance budget validation logic
+    def responseTime = results.metrics?.http_req_duration?.avg
+    if (responseTime > 500) {
+        error "Performance budget exceeded: Average response time ${responseTime}ms > 500ms"
+    }
+}
+
+def monitorDeploymentHealth(namespace, minutes) {
+    timeout(time: minutes, unit: 'MINUTES') {
+        sh """
+            # Monitor deployment health
+            while true; do
+                if kubectl get deployment ${APP_NAME} -n ${namespace} -o jsonpath='{.status.readyReplicas}' | grep -q '3'; then
+                    echo "Deployment healthy"
+                    break
+                fi
+                sleep 30
+            done
+        """
+    }
+}
+
+def updateDeploymentMetrics() {
+    // Send metrics to monitoring system
+    sh """
+        curl -X POST http://prometheus-pushgateway:9091/metrics/job/jenkins-deployment \
+            -d 'deployment_success{job="jenkins",app="${APP_NAME}"} 1'
+    """
+}

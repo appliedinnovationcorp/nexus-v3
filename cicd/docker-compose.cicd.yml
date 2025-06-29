@@ -1,0 +1,419 @@
+version: '3.8'
+
+services:
+  # Jenkins for CI/CD orchestration
+  jenkins:
+    image: jenkins/jenkins:2.426.1-lts
+    container_name: jenkins-cicd
+    user: root
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+      - JENKINS_OPTS=--httpPort=8080
+    volumes:
+      - jenkins-data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/jenkins:/var/jenkins_home/init.groovy.d
+      - ./config/jenkins/plugins.txt:/usr/share/jenkins/ref/plugins.txt
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # GitLab CE for Git repository and CI/CD
+  gitlab:
+    image: gitlab/gitlab-ce:16.6.1-ce.0
+    container_name: gitlab-cicd
+    hostname: gitlab.nexus-v3.local
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab.nexus-v3.local:8081'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2224
+        gitlab_rails['monitoring_whitelist'] = ['127.0.0.0/8', '172.0.0.0/8']
+        gitlab_rails['env'] = {'MALLOC_CONF' => 'dirty_decay_ms:1000,muzzy_decay_ms:1000'}
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 10
+        prometheus_monitoring['enable'] = true
+        grafana['enable'] = false
+        alertmanager['enable'] = false
+    ports:
+      - "8081:8081"
+      - "2224:22"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    networks:
+      - cicd-network
+    restart: unless-stopped
+    shm_size: 256m
+
+  # ArgoCD for GitOps continuous deployment
+  argocd-server:
+    image: quay.io/argoproj/argocd:v2.9.3
+    container_name: argocd-server
+    command:
+      - argocd-server
+      - --staticassets
+      - /shared/app
+      - --insecure
+    environment:
+      - ARGOCD_SERVER_INSECURE=true
+    ports:
+      - "8082:8080"
+    volumes:
+      - argocd-data:/home/argocd
+    networks:
+      - cicd-network
+    depends_on:
+      - argocd-redis
+    restart: unless-stopped
+
+  # ArgoCD Redis
+  argocd-redis:
+    image: redis:7-alpine
+    container_name: argocd-redis
+    volumes:
+      - argocd-redis-data:/data
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # ArgoCD Repository Server
+  argocd-repo-server:
+    image: quay.io/argoproj/argocd:v2.9.3
+    container_name: argocd-repo-server
+    command:
+      - argocd-repo-server
+    volumes:
+      - argocd-data:/home/argocd
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # ArgoCD Application Controller
+  argocd-application-controller:
+    image: quay.io/argoproj/argocd:v2.9.3
+    container_name: argocd-application-controller
+    command:
+      - argocd-application-controller
+    volumes:
+      - argocd-data:/home/argocd
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Tekton Dashboard (for Kubernetes-native CI/CD)
+  tekton-dashboard:
+    image: gcr.io/tekton-releases/github.com/tektoncd/dashboard/cmd/dashboard:v0.41.0
+    container_name: tekton-dashboard
+    ports:
+      - "9097:9097"
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Harbor for container registry
+  harbor-core:
+    image: goharbor/harbor-core:v2.9.1
+    container_name: harbor-core
+    environment:
+      - CORE_SECRET=not-a-secure-secret
+      - JOBSERVICE_SECRET=not-a-secure-secret
+    volumes:
+      - harbor-data:/data
+      - ./config/harbor:/etc/core/app.conf
+    ports:
+      - "8083:8080"
+    networks:
+      - cicd-network
+    depends_on:
+      - harbor-db
+      - harbor-redis
+    restart: unless-stopped
+
+  # Harbor Database
+  harbor-db:
+    image: goharbor/harbor-db:v2.9.1
+    container_name: harbor-db
+    environment:
+      - POSTGRES_PASSWORD=root123
+      - POSTGRES_DB=registry
+      - POSTGRES_USER=postgres
+    volumes:
+      - harbor-db-data:/var/lib/postgresql/data
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Harbor Redis
+  harbor-redis:
+    image: goharbor/redis-photon:v2.9.1
+    container_name: harbor-redis
+    volumes:
+      - harbor-redis-data:/var/lib/redis
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # SonarQube for code quality analysis
+  sonarqube:
+    image: sonarqube:10.3-community
+    container_name: sonarqube-cicd
+    environment:
+      - SONAR_JDBC_URL=jdbc:postgresql://sonarqube-db:5432/sonar
+      - SONAR_JDBC_USERNAME=sonar
+      - SONAR_JDBC_PASSWORD=sonar
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    ports:
+      - "9000:9000"
+    networks:
+      - cicd-network
+    depends_on:
+      - sonarqube-db
+    restart: unless-stopped
+
+  # SonarQube Database
+  sonarqube-db:
+    image: postgres:15-alpine
+    container_name: sonarqube-db
+    environment:
+      - POSTGRES_USER=sonar
+      - POSTGRES_PASSWORD=sonar
+      - POSTGRES_DB=sonar
+    volumes:
+      - sonarqube-db-data:/var/lib/postgresql/data
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # OWASP ZAP for security testing
+  zap:
+    image: owasp/zap2docker-stable:2.14.0
+    container_name: owasp-zap
+    command: zap-webswing.sh
+    ports:
+      - "8084:8080"
+      - "8090:8090"
+    volumes:
+      - zap-data:/zap/wrk
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Trivy for container security scanning
+  trivy:
+    image: aquasec/trivy:0.48.1
+    container_name: trivy-scanner
+    command: server --listen 0.0.0.0:4954
+    ports:
+      - "4954:4954"
+    volumes:
+      - trivy-cache:/root/.cache/trivy
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Flagsmith for feature flags
+  flagsmith:
+    image: flagsmith/flagsmith:2.82.0
+    container_name: flagsmith-api
+    environment:
+      - DATABASE_URL=postgresql://flagsmith:flagsmith@flagsmith-db:5432/flagsmith
+      - DJANGO_ALLOWED_HOSTS=*
+      - DJANGO_SECRET_KEY=your-secret-key-here
+      - ENABLE_ADMIN_ACCESS_USER_PASS=True
+    ports:
+      - "8085:8000"
+    networks:
+      - cicd-network
+    depends_on:
+      - flagsmith-db
+    restart: unless-stopped
+
+  # Flagsmith Database
+  flagsmith-db:
+    image: postgres:15-alpine
+    container_name: flagsmith-db
+    environment:
+      - POSTGRES_PASSWORD=flagsmith
+      - POSTGRES_DB=flagsmith
+      - POSTGRES_USER=flagsmith
+    volumes:
+      - flagsmith-db-data:/var/lib/postgresql/data
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # K6 for performance testing
+  k6:
+    image: grafana/k6:0.47.0
+    container_name: k6-performance
+    volumes:
+      - ./config/k6:/scripts
+    networks:
+      - cicd-network
+    restart: "no"
+
+  # Terraform for Infrastructure as Code
+  terraform:
+    image: hashicorp/terraform:1.6.6
+    container_name: terraform-iac
+    volumes:
+      - ./config/terraform:/workspace
+      - terraform-data:/root/.terraform
+    working_dir: /workspace
+    networks:
+      - cicd-network
+    restart: "no"
+
+  # Terragrunt for Terraform orchestration
+  terragrunt:
+    image: alpine/terragrunt:1.6.6
+    container_name: terragrunt-iac
+    volumes:
+      - ./config/terragrunt:/workspace
+      - terragrunt-data:/root/.terragrunt-cache
+    working_dir: /workspace
+    networks:
+      - cicd-network
+    restart: "no"
+
+  # Ansible for configuration management
+  ansible:
+    image: quay.io/ansible/ansible-runner:2.3.4
+    container_name: ansible-config
+    volumes:
+      - ./config/ansible:/runner
+    networks:
+      - cicd-network
+    restart: "no"
+
+  # Istio Proxy for traffic management (canary deployments)
+  istio-proxy:
+    image: istio/proxyv2:1.20.1
+    container_name: istio-proxy
+    ports:
+      - "15000:15000"
+      - "15001:15001"
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Flagger for progressive delivery
+  flagger:
+    image: ghcr.io/fluxcd/flagger:1.35.0
+    container_name: flagger-progressive
+    command:
+      - -log-level=info
+      - -metrics-server=http://prometheus:9090
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Argo Rollouts for advanced deployment strategies
+  argo-rollouts:
+    image: quay.io/argoproj/argo-rollouts:v1.6.4
+    container_name: argo-rollouts
+    command:
+      - /manager
+      - --metrics-addr=0.0.0.0:8080
+      - --probe-addr=0.0.0.0:8081
+    ports:
+      - "8086:8080"
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Sealed Secrets for secret management
+  sealed-secrets-controller:
+    image: quay.io/bitnami/sealed-secrets-controller:v0.24.5
+    container_name: sealed-secrets
+    ports:
+      - "8087:8080"
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Vault for secret management
+  vault:
+    image: hashicorp/vault:1.15.4
+    container_name: vault-secrets
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=myroot
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/data
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Minio for artifact storage
+  minio:
+    image: minio/minio:RELEASE.2023-12-23T07-19-11Z
+    container_name: minio-artifacts
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9001:9001"
+      - "9002:9000"
+    volumes:
+      - minio-data:/data
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+  # Nexus Repository for artifact management
+  nexus:
+    image: sonatype/nexus3:3.44.0
+    container_name: nexus-artifacts
+    environment:
+      - INSTALL4J_ADD_VM_PARAMS=-Xms1g -Xmx1g -XX:MaxDirectMemorySize=2g
+    ports:
+      - "8088:8081"
+    volumes:
+      - nexus-data:/nexus-data
+    networks:
+      - cicd-network
+    restart: unless-stopped
+
+volumes:
+  jenkins-data:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+  argocd-data:
+  argocd-redis-data:
+  harbor-data:
+  harbor-db-data:
+  harbor-redis-data:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:
+  sonarqube-db-data:
+  zap-data:
+  trivy-cache:
+  flagsmith-db-data:
+  terraform-data:
+  terragrunt-data:
+  vault-data:
+  minio-data:
+  nexus-data:
+
+networks:
+  cicd-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16

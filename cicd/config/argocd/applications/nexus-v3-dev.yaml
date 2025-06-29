@@ -1,0 +1,230 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nexus-v3-dev
+  namespace: argocd
+  labels:
+    app: nexus-v3
+    environment: dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  
+  source:
+    repoURL: https://gitlab.nexus-v3.local/nexus-v3/nexus-v3-app.git
+    targetRevision: HEAD
+    path: k8s/dev
+    
+    # Kustomize configuration
+    kustomize:
+      images:
+        - name: nexus-v3-app
+          newTag: latest-dev
+      patchesStrategicMerge:
+        - deployment-dev-patch.yaml
+      
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nexus-v3-dev
+    
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+        
+  # Health checks
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+        
+  # Notification configuration
+  operation:
+    initiatedBy:
+      username: argocd-server
+    info:
+      - name: reason
+        value: "Automated sync from Git repository"
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nexus-v3-staging
+  namespace: argocd
+  labels:
+    app: nexus-v3
+    environment: staging
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  
+  source:
+    repoURL: https://gitlab.nexus-v3.local/nexus-v3/nexus-v3-app.git
+    targetRevision: main
+    path: k8s/staging
+    
+    kustomize:
+      images:
+        - name: nexus-v3-app
+          newTag: latest-staging
+      patchesStrategicMerge:
+        - deployment-staging-patch.yaml
+        - service-staging-patch.yaml
+      
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nexus-v3-staging
+    
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false  # Manual approval required for staging
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nexus-v3-prod
+  namespace: argocd
+  labels:
+    app: nexus-v3
+    environment: prod
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  
+  source:
+    repoURL: https://gitlab.nexus-v3.local/nexus-v3/nexus-v3-app.git
+    targetRevision: release
+    path: k8s/prod
+    
+    kustomize:
+      images:
+        - name: nexus-v3-app
+          newTag: latest-prod
+      patchesStrategicMerge:
+        - deployment-prod-patch.yaml
+        - service-prod-patch.yaml
+        - ingress-prod-patch.yaml
+      
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nexus-v3-prod
+    
+  syncPolicy:
+    automated:
+      prune: false  # Manual pruning for production
+      selfHeal: false  # Manual healing for production
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 2
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+        
+  # Production-specific health checks
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+        - /spec/template/spec/containers/0/resources
+        
+---
+# ArgoCD Project for Nexus V3
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: nexus-v3-project
+  namespace: argocd
+spec:
+  description: "Nexus V3 Application Project"
+  
+  sourceRepos:
+    - 'https://gitlab.nexus-v3.local/nexus-v3/*'
+    - 'https://github.com/appliedinnovationcorp/nexus-v3.git'
+    
+  destinations:
+    - namespace: 'nexus-v3-*'
+      server: https://kubernetes.default.svc
+      
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: ReplicaSet
+    - group: extensions
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: argoproj.io
+      kind: Rollout
+      
+  roles:
+    - name: developer
+      description: "Developer access to dev environment"
+      policies:
+        - p, proj:nexus-v3-project:developer, applications, get, nexus-v3-project/nexus-v3-dev, allow
+        - p, proj:nexus-v3-project:developer, applications, sync, nexus-v3-project/nexus-v3-dev, allow
+      groups:
+        - nexus-v3:developers
+        
+    - name: sre
+      description: "SRE access to all environments"
+      policies:
+        - p, proj:nexus-v3-project:sre, applications, *, nexus-v3-project/*, allow
+        - p, proj:nexus-v3-project:sre, repositories, *, *, allow
+      groups:
+        - nexus-v3:sre-team
+        
+    - name: release-manager
+      description: "Release manager access to staging and production"
+      policies:
+        - p, proj:nexus-v3-project:release-manager, applications, *, nexus-v3-project/nexus-v3-staging, allow
+        - p, proj:nexus-v3-project:release-manager, applications, *, nexus-v3-project/nexus-v3-prod, allow
+      groups:
+        - nexus-v3:release-managers

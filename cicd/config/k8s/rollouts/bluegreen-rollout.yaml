@@ -1,0 +1,397 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: nexus-v3-bluegreen
+  namespace: nexus-v3-prod
+  labels:
+    app: nexus-v3
+    deployment-strategy: blue-green
+spec:
+  replicas: 3
+  strategy:
+    blueGreen:
+      # Service configuration
+      activeService: nexus-v3-active-service
+      previewService: nexus-v3-preview-service
+      
+      # Automatic promotion configuration
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+          - templateName: blue-green-success-rate
+          - templateName: blue-green-latency
+        args:
+          - name: service-name
+            value: nexus-v3-preview-service
+            
+      postPromotionAnalysis:
+        templates:
+          - templateName: blue-green-success-rate
+          - templateName: blue-green-latency
+        args:
+          - name: service-name
+            value: nexus-v3-active-service
+            
+      # Preview replica count (for testing)
+      previewReplicaCount: 2
+      
+      # Promotion configuration
+      promotionPolicy:
+        # Manual promotion required
+        type: Manual
+        
+  selector:
+    matchLabels:
+      app: nexus-v3
+      
+  template:
+    metadata:
+      labels:
+        app: nexus-v3
+    spec:
+      containers:
+        - name: nexus-v3
+          image: harbor.nexus-v3.local/nexus-v3-app:latest
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: DEPLOYMENT_STRATEGY
+              value: "blue-green"
+            - name: FLAGSMITH_ENVIRONMENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith-config
+                  key: environment-key
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-config
+                  key: url
+                  
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 2
+            
+          # Startup probe for slow-starting containers
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+            
+          # Resource configuration
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+              
+          # Security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+                
+          # Volume mounts for temporary files
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /app/cache
+              
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+          
+      # Pod security and scheduling
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - nexus-v3
+                topologyKey: kubernetes.io/hostname
+                
+---
+# Active Service (Blue/Green)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-v3-active-service
+  namespace: nexus-v3-prod
+  labels:
+    app: nexus-v3
+    service-type: active
+spec:
+  selector:
+    app: nexus-v3
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  type: ClusterIP
+  
+---
+# Preview Service (Blue/Green)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-v3-preview-service
+  namespace: nexus-v3-prod
+  labels:
+    app: nexus-v3
+    service-type: preview
+spec:
+  selector:
+    app: nexus-v3
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  type: ClusterIP
+  
+---
+# Analysis Templates for Blue-Green Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: blue-green-success-rate
+  namespace: nexus-v3-prod
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: success-rate
+      interval: 30s
+      count: 20
+      successCondition: result[0] >= 0.98
+      failureLimit: 5
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}",code!~"5.."}[2m])) /
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
+            
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: blue-green-latency
+  namespace: nexus-v3-prod
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: latency-p95
+      interval: 30s
+      count: 20
+      successCondition: result[0] <= 0.3
+      failureLimit: 5
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            histogram_quantile(0.95, 
+              sum(rate(http_request_duration_seconds_bucket{service="{{args.service-name}}"}[2m])) by (le)
+            )
+            
+    - name: latency-p99
+      interval: 30s
+      count: 20
+      successCondition: result[0] <= 0.5
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus:9090
+          query: |
+            histogram_quantile(0.99, 
+              sum(rate(http_request_duration_seconds_bucket{service="{{args.service-name}}"}[2m])) by (le)
+            )
+            
+---
+# Blue-Green Ingress Configuration
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexus-v3-bluegreen-ingress
+  namespace: nexus-v3-prod
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    # Blue-Green specific annotations
+    nginx.ingress.kubernetes.io/canary: "false"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
+spec:
+  tls:
+    - hosts:
+        - nexus-v3.prod.local
+        - preview.nexus-v3.prod.local
+      secretName: nexus-v3-tls
+  rules:
+    # Production traffic (active service)
+    - host: nexus-v3.prod.local
+      http:
+        paths:
+          - path: /(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: nexus-v3-active-service
+                port:
+                  number: 80
+                  
+    # Preview traffic (preview service)
+    - host: preview.nexus-v3.prod.local
+      http:
+        paths:
+          - path: /(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: nexus-v3-preview-service
+                port:
+                  number: 80
+                  
+---
+# Network Policy for Blue-Green Deployment
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-v3-bluegreen-netpol
+  namespace: nexus-v3-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: nexus-v3
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Allow traffic from monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow database access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: database
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow external API calls
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+          
+---
+# HorizontalPodAutoscaler for Blue-Green Deployment
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nexus-v3-bluegreen-hpa
+  namespace: nexus-v3-prod
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: nexus-v3-bluegreen
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Max
