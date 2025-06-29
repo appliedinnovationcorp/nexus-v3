@@ -1,0 +1,287 @@
+version: '3.8'
+
+services:
+  # Next.js Application with SSR/SSG
+  nextjs-app:
+    build:
+      context: ./docker/nextjs
+      dockerfile: Dockerfile
+    container_name: nextjs-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - REDIS_URL=redis://frontend-redis:6379
+      - CDN_URL=http://nginx-cdn:8080
+    volumes:
+      - ../apps/web:/app
+      - nextjs_cache:/app/.next/cache
+      - static_assets:/app/public/static
+    networks:
+      - frontend-optimization
+    depends_on:
+      - frontend-redis
+      - nginx-cdn
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # NGINX CDN with Edge Caching
+  nginx-cdn:
+    build:
+      context: ./docker/nginx-cdn
+      dockerfile: Dockerfile
+    container_name: nginx-cdn
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/conf.d:/etc/nginx/conf.d
+      - static_assets:/var/www/static
+      - nginx_cache:/var/cache/nginx
+      - ./ssl:/etc/nginx/ssl
+    networks:
+      - frontend-optimization
+    depends_on:
+      - nextjs-app
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Varnish Cache for Advanced Caching
+  varnish-cache:
+    image: varnish:7.4
+    container_name: varnish-cache
+    ports:
+      - "8081:80"
+    volumes:
+      - ./config/varnish/default.vcl:/etc/varnish/default.vcl
+    environment:
+      - VARNISH_SIZE=256M
+    command: ["varnishd", "-F", "-f", "/etc/varnish/default.vcl", "-s", "malloc,256M", "-a", "0.0.0.0:80"]
+    networks:
+      - frontend-optimization
+    depends_on:
+      - nginx-cdn
+
+  # Redis for Session and Cache Management
+  frontend-redis:
+    image: redis:7-alpine
+    container_name: frontend-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - frontend_redis_data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - frontend-optimization
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Image Optimization Service
+  image-optimizer:
+    build:
+      context: ./docker/image-optimizer
+      dockerfile: Dockerfile
+    container_name: image-optimizer
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://frontend-redis:6379
+      - STORAGE_PATH=/app/storage
+    volumes:
+      - image_storage:/app/storage
+      - static_assets:/app/public
+    networks:
+      - frontend-optimization
+    depends_on:
+      - frontend-redis
+
+  # Service Worker Builder
+  sw-builder:
+    build:
+      context: ./docker/sw-builder
+      dockerfile: Dockerfile
+    container_name: sw-builder
+    volumes:
+      - ../apps/web:/app/src
+      - static_assets:/app/dist
+      - sw_cache:/app/cache
+    networks:
+      - frontend-optimization
+    command: ["node", "build-sw.js"]
+
+  # Bundle Analyzer
+  bundle-analyzer:
+    build:
+      context: ./docker/bundle-analyzer
+      dockerfile: Dockerfile
+    container_name: bundle-analyzer
+    ports:
+      - "8888:8888"
+    volumes:
+      - ../apps/web:/app
+      - bundle_reports:/app/reports
+    networks:
+      - frontend-optimization
+    environment:
+      - ANALYZE_MODE=server
+
+  # Lighthouse CI for Performance Monitoring
+  lighthouse-performance:
+    image: patrickhulce/lhci-server:latest
+    container_name: lighthouse-performance
+    ports:
+      - "9002:9001"
+    environment:
+      - LHCI_STORAGE__SQL__DIALECT=postgres
+      - LHCI_STORAGE__SQL__DATABASE=lighthouse_perf
+      - LHCI_STORAGE__SQL__USERNAME=lighthouse
+      - LHCI_STORAGE__SQL__PASSWORD=lighthouse_password
+      - LHCI_STORAGE__SQL__HOST=lighthouse-perf-postgres
+      - LHCI_STORAGE__SQL__PORT=5432
+    depends_on:
+      - lighthouse-perf-postgres
+    networks:
+      - frontend-optimization
+
+  lighthouse-perf-postgres:
+    image: postgres:15-alpine
+    container_name: lighthouse-perf-postgres
+    environment:
+      - POSTGRES_USER=lighthouse
+      - POSTGRES_PASSWORD=lighthouse_password
+      - POSTGRES_DB=lighthouse_perf
+    volumes:
+      - lighthouse_perf_postgres_data:/var/lib/postgresql/data
+    networks:
+      - frontend-optimization
+
+  # WebP Converter Service
+  webp-converter:
+    build:
+      context: ./docker/webp-converter
+      dockerfile: Dockerfile
+    container_name: webp-converter
+    ports:
+      - "3002:3002"
+    volumes:
+      - static_assets:/app/assets
+      - webp_cache:/app/cache
+    networks:
+      - frontend-optimization
+    environment:
+      - CONVERSION_QUALITY=80
+      - CACHE_TTL=86400
+
+  # Critical CSS Generator
+  critical-css:
+    build:
+      context: ./docker/critical-css
+      dockerfile: Dockerfile
+    container_name: critical-css
+    volumes:
+      - ../apps/web:/app/src
+      - static_assets:/app/dist
+      - critical_css_cache:/app/cache
+    networks:
+      - frontend-optimization
+    environment:
+      - TARGET_URL=http://nextjs-app:3000
+
+  # Frontend Performance Monitor
+  perf-monitor:
+    build:
+      context: ./docker/perf-monitor
+      dockerfile: Dockerfile
+    container_name: perf-monitor
+    ports:
+      - "3003:3003"
+    environment:
+      - REDIS_URL=redis://frontend-redis:6379
+      - POSTGRES_URL=postgresql://perf_monitor:perf_password@perf-postgres:5432/frontend_perf
+      - LIGHTHOUSE_URL=http://lighthouse-performance:9001
+    depends_on:
+      - frontend-redis
+      - perf-postgres
+      - lighthouse-performance
+    networks:
+      - frontend-optimization
+
+  perf-postgres:
+    image: postgres:15-alpine
+    container_name: perf-postgres
+    environment:
+      - POSTGRES_USER=perf_monitor
+      - POSTGRES_PASSWORD=perf_password
+      - POSTGRES_DB=frontend_perf
+    volumes:
+      - perf_postgres_data:/var/lib/postgresql/data
+      - ./sql/perf-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - frontend-optimization
+
+  # Grafana for Frontend Performance Dashboards
+  frontend-grafana:
+    image: grafana/grafana:latest
+    container_name: frontend-grafana
+    ports:
+      - "3004:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+    volumes:
+      - frontend_grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - frontend-optimization
+
+  # Prometheus for Frontend Metrics
+  frontend-prometheus:
+    image: prom/prometheus:latest
+    container_name: frontend-prometheus
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - frontend_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - frontend-optimization
+
+volumes:
+  nextjs_cache:
+  static_assets:
+  nginx_cache:
+  frontend_redis_data:
+  image_storage:
+  sw_cache:
+  bundle_reports:
+  lighthouse_perf_postgres_data:
+  webp_cache:
+  critical_css_cache:
+  perf_postgres_data:
+  frontend_grafana_data:
+  frontend_prometheus_data:
+
+networks:
+  frontend-optimization:
+    driver: bridge
