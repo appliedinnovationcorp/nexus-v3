@@ -33,6 +33,7 @@ pnpm test
 - `alerting/` - **NEW** Enterprise alerting & incident management with chaos engineering and SLO monitoring
 - `cicd/` - **NEW** Advanced CI/CD pipeline with multi-stage deployments and security scanning
 - `containers/` - **NEW** Enterprise container orchestration with Kubernetes, Helm, and service mesh
+- `quality-gates/` - **NEW** Enterprise quality gates with automated code quality, security, performance, and accessibility checks
 
 ## 🛠 Tech Stack
 
@@ -83,6 +84,14 @@ pnpm test
 - **Autoscaling**: HPA + VPA with predictive scaling
 - **Security**: Pod Security Policies + Network Policies
 - **Ingress**: NGINX Ingress + cert-manager
+
+### Quality Gates & Assurance
+- **Code Quality**: SonarQube Community with comprehensive analysis
+- **Security Scanning**: OWASP ZAP + Trivy + Semgrep for SAST/DAST
+- **Performance Testing**: Lighthouse CI with regression detection
+- **Accessibility**: Pa11y + ESLint jsx-a11y for WCAG 2.1 AA compliance
+- **Static Analysis**: ESLint + CodeClimate with security plugins
+- **Orchestration**: Custom Quality Gates API with automated enforcement
 
 ## 🏛️ Compliance System
 
@@ -219,14 +228,51 @@ docker-compose -f cicd/docker-compose.cicd.yml up -d
 - **Performance Testing**: Automated testing with budget enforcement
 - **Infrastructure as Code**: Terraform validation and automated provisioning
 
+## 🔍 Quality Gates & Assurance
+
+Enterprise-grade quality assurance with comprehensive automated checks:
+
+### 🔧 Quality Gates Components
+- **Code Quality Analysis** (`setup-quality-gates.sh`) - SonarQube Community with comprehensive metrics
+- **Security Scanning** - OWASP ZAP + Trivy + Semgrep for SAST/DAST analysis
+- **Performance Testing** - Lighthouse CI with regression detection and budgets
+- **Accessibility Compliance** - Pa11y + ESLint jsx-a11y for WCAG 2.1 AA validation
+- **Static Analysis** - ESLint + CodeClimate with security and complexity analysis
+
+### 🚦 Quick Quality Gates Setup
+```bash
+# Initialize quality gates system
+./quality-gates/scripts/setup-quality-gates.sh
+
+# Start quality gates infrastructure
+docker-compose -f quality-gates/docker-compose.quality-gates.yml up -d
+
+# Run quality gates for project
+./quality-gates/scripts/run-quality-gates.sh --project nexus-v3 --report
+
+# Access quality dashboards
+# - Quality Gates Dashboard: http://localhost:3002
+# - SonarQube: http://localhost:9000
+# - OWASP ZAP: http://localhost:8080
+# - Pa11y Dashboard: http://localhost:4000
+# - Lighthouse CI: http://localhost:9001
+```
+
+### 🎯 Quality Gates Features
+- **Automated Code Quality**: Coverage, complexity, maintainability, technical debt analysis
+- **Security Vulnerability Gates**: SAST, DAST, container scanning, dependency analysis
+- **Performance Regression Detection**: Lighthouse CI with automated budget validation
+- **Accessibility Compliance**: WCAG 2.1 AA automated testing and validation
+- **Comprehensive Reporting**: HTML, JSON, and PDF reports with historical tracking
+- **CI/CD Integration**: RESTful APIs for seamless pipeline integration
+
+
 ## 🐳 Container & Orchestration
 
 Enterprise container orchestration with Kubernetes, Helm, and service mesh:
-
 ### 🔧 Container Components
 - **Container Platform** (`setup-containers.sh`) - Docker + Kubernetes + Helm
 - **Service Mesh** - Istio with mTLS and advanced traffic management
-- **Security Policies** - Pod Security Policies + Network Policies
 - **Autoscaling** - HPA + VPA with predictive scaling capabilities
 - **Ingress Management** - NGINX Ingress + cert-manager for TLS
 
@@ -261,6 +307,8 @@ helm upgrade --install nexus-v3 containers/k8s/helm/nexus-v3/ --namespace nexus-
 - [Monitoring Stack](./MONITORING-STACK-REPORT.md) - **NEW** Complete observability implementation
 - [Alerting & Incident Management](./ALERTING-INCIDENT-MANAGEMENT-REPORT.md) - **NEW** Enterprise alerting system
 - [CI/CD Pipeline](./ADVANCED-CICD-PIPELINE-REPORT.md) - **NEW** Advanced deployment automation
+- [Quality Gates System](./QUALITY-GATES-SYSTEM-REPORT.md) - **NEW** Enterprise quality assurance platform
+
 - [Container Orchestration](./CONTAINER-ORCHESTRATION-REPORT.md) - **NEW** Enterprise Kubernetes platform
 
 ## 🤝 Contributing
@@ -268,5 +316,3 @@ helm upgrade --install nexus-v3 containers/k8s/helm/nexus-v3/ --namespace nexus-
 Please read our [contributing guidelines](./docs/contributing.md) before submitting PRs.
 
 ## 📄 License
-
-MIT License - see [LICENSE](./LICENSE) for details.

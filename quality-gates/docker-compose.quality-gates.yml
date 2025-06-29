@@ -1,0 +1,290 @@
+version: '3.8'
+
+services:
+  # SonarQube Community Edition - Code Quality & Security Analysis
+  sonarqube:
+    image: sonarqube:10.3-community
+    container_name: sonarqube
+    environment:
+      - SONAR_JDBC_URL=jdbc:postgresql://sonar-postgres:5432/sonar
+      - SONAR_JDBC_USERNAME=sonar
+      - SONAR_JDBC_PASSWORD=sonar_password
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - ./config/sonarqube/sonar.properties:/opt/sonarqube/conf/sonar.properties
+    ports:
+      - "9000:9000"
+    depends_on:
+      - sonar-postgres
+    networks:
+      - quality-gates
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/api/system/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  sonar-postgres:
+    image: postgres:15-alpine
+    container_name: sonar-postgres
+    environment:
+      - POSTGRES_USER=sonar
+      - POSTGRES_PASSWORD=sonar_password
+      - POSTGRES_DB=sonar
+    volumes:
+      - sonar_postgres_data:/var/lib/postgresql/data
+    networks:
+      - quality-gates
+
+  # OWASP ZAP - Security Testing
+  zap:
+    image: owasp/zap2docker-stable:latest
+    container_name: owasp-zap
+    command: zap-webswing.sh
+    ports:
+      - "8080:8080"
+      - "8090:8090"
+    volumes:
+      - ./config/zap:/zap/wrk
+      - zap_data:/home/zap/.ZAP
+    networks:
+      - quality-gates
+    environment:
+      - ZAP_PORT=8080
+
+  # Trivy - Container & Code Security Scanning
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: trivy-server
+    command: server --listen 0.0.0.0:4954
+    ports:
+      - "4954:4954"
+    volumes:
+      - trivy_cache:/root/.cache/trivy
+    networks:
+      - quality-gates
+
+  # Pa11y - Accessibility Testing
+  pa11y-dashboard:
+    image: pa11y/pa11y-dashboard:latest
+    container_name: pa11y-dashboard
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=mongodb://pa11y-mongo:27017/pa11y
+      - PORT=4000
+    depends_on:
+      - pa11y-mongo
+    networks:
+      - quality-gates
+    volumes:
+      - ./config/pa11y/config.json:/app/config/development.json
+
+  pa11y-mongo:
+    image: mongo:6.0
+    container_name: pa11y-mongo
+    volumes:
+      - pa11y_mongo_data:/data/db
+    networks:
+      - quality-gates
+
+  # Lighthouse CI - Performance & Best Practices
+  lighthouse-ci:
+    image: patrickhulce/lhci-server:latest
+    container_name: lighthouse-ci
+    ports:
+      - "9001:9001"
+    environment:
+      - LHCI_STORAGE__SQL__DIALECT=postgres
+      - LHCI_STORAGE__SQL__DATABASE=lighthouse
+      - LHCI_STORAGE__SQL__USERNAME=lighthouse
+      - LHCI_STORAGE__SQL__PASSWORD=lighthouse_password
+      - LHCI_STORAGE__SQL__HOST=lighthouse-postgres
+      - LHCI_STORAGE__SQL__PORT=5432
+    depends_on:
+      - lighthouse-postgres
+    networks:
+      - quality-gates
+    volumes:
+      - ./config/lighthouse:/usr/src/lhci/dist/src/server/ui/public/config
+
+  lighthouse-postgres:
+    image: postgres:15-alpine
+    container_name: lighthouse-postgres
+    environment:
+      - POSTGRES_USER=lighthouse
+      - POSTGRES_PASSWORD=lighthouse_password
+      - POSTGRES_DB=lighthouse
+    volumes:
+      - lighthouse_postgres_data:/var/lib/postgresql/data
+    networks:
+      - quality-gates
+
+  # ESLint Daemon - Fast Linting
+  eslint-daemon:
+    build:
+      context: ./docker/eslint-daemon
+      dockerfile: Dockerfile
+    container_name: eslint-daemon
+    ports:
+      - "7777:7777"
+    volumes:
+      - ../:/workspace
+      - eslint_cache:/root/.eslintcache
+    networks:
+      - quality-gates
+    working_dir: /workspace
+
+  # Semgrep - Static Analysis Security Testing (SAST)
+  semgrep:
+    image: returntocorp/semgrep:latest
+    container_name: semgrep
+    volumes:
+      - ../:/src
+      - ./config/semgrep:/config
+      - semgrep_cache:/tmp/semgrep
+    networks:
+      - quality-gates
+    working_dir: /src
+
+  # CodeClimate Engine - Code Quality Metrics
+  codeclimate:
+    image: codeclimate/codeclimate:latest
+    container_name: codeclimate
+    volumes:
+      - ../:/code
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/cc:/tmp/cc
+    networks:
+      - quality-gates
+    working_dir: /code
+
+  # Quality Gates Orchestrator - Custom Service
+  quality-gates-orchestrator:
+    build:
+      context: ./docker/orchestrator
+      dockerfile: Dockerfile
+    container_name: quality-gates-orchestrator
+    ports:
+      - "3001:3001"
+    environment:
+      - SONARQUBE_URL=http://sonarqube:9000
+      - ZAP_URL=http://zap:8080
+      - TRIVY_URL=http://trivy:4954
+      - PA11Y_URL=http://pa11y-dashboard:4000
+      - LIGHTHOUSE_URL=http://lighthouse-ci:9001
+      - ESLINT_URL=http://eslint-daemon:7777
+      - REDIS_URL=redis://quality-gates-redis:6379
+      - POSTGRES_URL=postgresql://orchestrator:orchestrator_password@orchestrator-postgres:5432/quality_gates
+    depends_on:
+      - sonarqube
+      - zap
+      - trivy
+      - pa11y-dashboard
+      - lighthouse-ci
+      - eslint-daemon
+      - quality-gates-redis
+      - orchestrator-postgres
+    networks:
+      - quality-gates
+    volumes:
+      - ../:/workspace
+      - ./config/orchestrator:/app/config
+
+  quality-gates-redis:
+    image: redis:7-alpine
+    container_name: quality-gates-redis
+    volumes:
+      - quality_gates_redis_data:/data
+    networks:
+      - quality-gates
+
+  orchestrator-postgres:
+    image: postgres:15-alpine
+    container_name: orchestrator-postgres
+    environment:
+      - POSTGRES_USER=orchestrator
+      - POSTGRES_PASSWORD=orchestrator_password
+      - POSTGRES_DB=quality_gates
+    volumes:
+      - orchestrator_postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - quality-gates
+
+  # Quality Gates Dashboard - Web UI
+  quality-gates-dashboard:
+    build:
+      context: ./docker/dashboard
+      dockerfile: Dockerfile
+    container_name: quality-gates-dashboard
+    ports:
+      - "3002:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001
+      - REACT_APP_SONARQUBE_URL=http://localhost:9000
+      - REACT_APP_ZAP_URL=http://localhost:8080
+      - REACT_APP_PA11Y_URL=http://localhost:4000
+      - REACT_APP_LIGHTHOUSE_URL=http://localhost:9001
+    depends_on:
+      - quality-gates-orchestrator
+    networks:
+      - quality-gates
+
+  # Grafana for Quality Metrics Visualization
+  quality-grafana:
+    image: grafana/grafana:latest
+    container_name: quality-grafana
+    ports:
+      - "3003:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+    volumes:
+      - quality_grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - quality-gates
+
+  # Prometheus for Quality Metrics Collection
+  quality-prometheus:
+    image: prom/prometheus:latest
+    container_name: quality-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - quality_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - quality-gates
+
+volumes:
+  sonarqube_data:
+  sonarqube_logs:
+  sonarqube_extensions:
+  sonar_postgres_data:
+  zap_data:
+  trivy_cache:
+  pa11y_mongo_data:
+  lighthouse_postgres_data:
+  eslint_cache:
+  semgrep_cache:
+  quality_gates_redis_data:
+  orchestrator_postgres_data:
+  quality_grafana_data:
+  quality_prometheus_data:
+
+networks:
+  quality-gates:
+    driver: bridge

@@ -1,0 +1,106 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Quality Gates Dashboard",
+    "tags": ["quality-gates", "nexus-v3"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Quality Gates Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "quality_gate_executions_total",
+            "legendFormat": "Total Executions"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Quality Gate Success Rate",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "rate(quality_gate_executions_total{status=\"passed\"}[5m]) / rate(quality_gate_executions_total[5m]) * 100",
+            "legendFormat": "Success Rate %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 70},
+                {"color": "green", "value": 90}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Quality Gate Execution Duration",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, quality_gate_duration_seconds_bucket)",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.50, quality_gate_duration_seconds_bucket)",
+            "legendFormat": "50th percentile"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Quality Gates by Type",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (gate_type) (quality_gate_executions_total)",
+            "legendFormat": "{{gate_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 5,
+        "title": "Recent Quality Gate Results",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "quality_gate_executions_total",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      }
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}
