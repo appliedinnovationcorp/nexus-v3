@@ -1,0 +1,440 @@
+version: '3.8'
+
+services:
+  # Consul for Service Discovery and Configuration
+  consul-server:
+    image: consul:1.16
+    container_name: consul-server
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+    command: >
+      consul agent -server -bootstrap-expect=1 -ui -bind=0.0.0.0 -client=0.0.0.0
+      -datacenter=dc1 -node=consul-server -data-dir=/consul/data
+    volumes:
+      - consul_data:/consul/data
+      - ./config/consul:/consul/config
+    networks:
+      - infrastructure-scaling
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nomad for Container Orchestration and Auto-scaling
+  nomad-server:
+    image: hashicorp/nomad:1.6
+    container_name: nomad-server
+    ports:
+      - "4646:4646"
+    environment:
+      - NOMAD_ADDR=http://0.0.0.0:4646
+    command: >
+      nomad agent -config=/nomad/config -bind=0.0.0.0 -data-dir=/nomad/data
+    volumes:
+      - nomad_data:/nomad/data
+      - ./config/nomad:/nomad/config
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - consul-server
+    networks:
+      - infrastructure-scaling
+    privileged: true
+
+  # HAProxy for Load Balancing
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: haproxy-lb
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8404:8404"  # Stats page
+    volumes:
+      - ./config/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+      - ./ssl:/etc/ssl/certs
+      - haproxy_logs:/var/log/haproxy
+    networks:
+      - infrastructure-scaling
+    depends_on:
+      - consul-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8404/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Keepalived for High Availability
+  keepalived-master:
+    image: osixia/keepalived:2.0.20
+    container_name: keepalived-master
+    environment:
+      - KEEPALIVED_INTERFACE=eth0
+      - KEEPALIVED_VIRTUAL_IPS=192.168.1.100
+      - KEEPALIVED_UNICAST_PEERS=#PYTHON2BASH:['192.168.1.101']
+      - KEEPALIVED_PASSWORD=secure_password
+      - KEEPALIVED_PRIORITY=110
+    volumes:
+      - ./config/keepalived/keepalived.conf:/container/service/keepalived/assets/keepalived.conf
+    networks:
+      - infrastructure-scaling
+    cap_add:
+      - NET_ADMIN
+      - NET_BROADCAST
+      - NET_RAW
+
+  # Prometheus for Metrics and Auto-scaling Decisions
+  prometheus-scaling:
+    image: prom/prometheus:latest
+    container_name: prometheus-scaling
+    ports:
+      - "9094:9090"
+    volumes:
+      - ./config/prometheus/prometheus-scaling.yml:/etc/prometheus/prometheus.yml
+      - ./config/prometheus/rules:/etc/prometheus/rules
+      - prometheus_scaling_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - infrastructure-scaling
+
+  # Grafana for Infrastructure Monitoring
+  grafana-scaling:
+    image: grafana/grafana:latest
+    container_name: grafana-scaling
+    ports:
+      - "3105:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+    volumes:
+      - grafana_scaling_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - infrastructure-scaling
+
+  # Auto-scaler Service
+  auto-scaler:
+    build:
+      context: ./docker/auto-scaler
+      dockerfile: Dockerfile
+    container_name: auto-scaler
+    environment:
+      - PROMETHEUS_URL=http://prometheus-scaling:9090
+      - CONSUL_URL=http://consul-server:8500
+      - NOMAD_URL=http://nomad-server:4646
+      - SCALING_INTERVAL=30
+      - PREDICTION_WINDOW=300
+    volumes:
+      - ./config/auto-scaler:/app/config
+      - ./logs:/app/logs
+    depends_on:
+      - prometheus-scaling
+      - consul-server
+      - nomad-server
+    networks:
+      - infrastructure-scaling
+
+  # Edge Cache (Varnish)
+  edge-cache:
+    image: varnish:7.4
+    container_name: edge-cache
+    ports:
+      - "8081:80"
+    volumes:
+      - ./config/varnish/edge.vcl:/etc/varnish/default.vcl
+    environment:
+      - VARNISH_SIZE=512M
+    command: ["varnishd", "-F", "-f", "/etc/varnish/default.vcl", "-s", "malloc,512M", "-a", "0.0.0.0:80"]
+    networks:
+      - infrastructure-scaling
+
+  # NGINX Edge Server
+  nginx-edge:
+    build:
+      context: ./docker/nginx-edge
+      dockerfile: Dockerfile
+    container_name: nginx-edge
+    ports:
+      - "8082:80"
+      - "8445:443"
+    volumes:
+      - ./config/nginx/nginx-edge.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/edge-sites:/etc/nginx/sites-enabled
+      - ./ssl:/etc/nginx/ssl
+      - nginx_edge_cache:/var/cache/nginx
+    networks:
+      - infrastructure-scaling
+
+  # Database Load Balancer (PgPool-II)
+  pgpool:
+    image: pgpool/pgpool:4.4
+    container_name: pgpool
+    ports:
+      - "5433:5432"
+    environment:
+      - PGPOOL_BACKEND_NODES=0:postgres-primary:5432,1:postgres-replica1:5432,2:postgres-replica2:5432
+      - PGPOOL_SR_CHECK_USER=postgres
+      - PGPOOL_SR_CHECK_PASSWORD=postgres_password
+      - PGPOOL_ENABLE_LOADBALANCE=yes
+      - PGPOOL_MAX_POOL=4
+      - PGPOOL_CHILD_LIFE_TIME=300
+      - PGPOOL_CHILD_MAX_CONNECTIONS=0
+      - PGPOOL_CONNECTION_LIFE_TIME=0
+      - PGPOOL_CLIENT_IDLE_LIMIT=0
+    volumes:
+      - ./config/pgpool/pgpool.conf:/opt/pgpool-II/etc/pgpool.conf
+      - ./config/pgpool/pcp.conf:/opt/pgpool-II/etc/pcp.conf
+    networks:
+      - infrastructure-scaling
+
+  # PostgreSQL Primary
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: postgres-primary
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres_password
+      - POSTGRES_DB=nexus_db
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=replicator_password
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./config/postgres/primary.conf:/etc/postgresql/postgresql.conf
+      - ./config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - infrastructure-scaling
+
+  # PostgreSQL Read Replica 1
+  postgres-replica1:
+    image: postgres:15-alpine
+    container_name: postgres-replica1
+    ports:
+      - "5435:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres_password
+      - POSTGRES_DB=nexus_db
+      - PGUSER=postgres
+      - POSTGRES_PRIMARY_HOST=postgres-primary
+      - POSTGRES_PRIMARY_PORT=5432
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=replicator_password
+    volumes:
+      - postgres_replica1_data:/var/lib/postgresql/data
+      - ./config/postgres/replica.conf:/etc/postgresql/postgresql.conf
+    depends_on:
+      - postgres-primary
+    networks:
+      - infrastructure-scaling
+
+  # PostgreSQL Read Replica 2
+  postgres-replica2:
+    image: postgres:15-alpine
+    container_name: postgres-replica2
+    ports:
+      - "5436:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres_password
+      - POSTGRES_DB=nexus_db
+      - PGUSER=postgres
+      - POSTGRES_PRIMARY_HOST=postgres-primary
+      - POSTGRES_PRIMARY_PORT=5432
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=replicator_password
+    volumes:
+      - postgres_replica2_data:/var/lib/postgresql/data
+      - ./config/postgres/replica.conf:/etc/postgresql/postgresql.conf
+    depends_on:
+      - postgres-primary
+    networks:
+      - infrastructure-scaling
+
+  # Redis Cluster for Distributed Caching
+  redis-cluster-1:
+    image: redis:7-alpine
+    container_name: redis-cluster-1
+    ports:
+      - "7001:7001"
+    volumes:
+      - redis_cluster1_data:/data
+      - ./config/redis/cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7001 --cluster-enabled yes --cluster-config-file nodes-7001.conf --cluster-node-timeout 5000 --appendonly yes
+    networks:
+      - infrastructure-scaling
+
+  redis-cluster-2:
+    image: redis:7-alpine
+    container_name: redis-cluster-2
+    ports:
+      - "7002:7002"
+    volumes:
+      - redis_cluster2_data:/data
+      - ./config/redis/cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7002 --cluster-enabled yes --cluster-config-file nodes-7002.conf --cluster-node-timeout 5000 --appendonly yes
+    networks:
+      - infrastructure-scaling
+
+  redis-cluster-3:
+    image: redis:7-alpine
+    container_name: redis-cluster-3
+    ports:
+      - "7003:7003"
+    volumes:
+      - redis_cluster3_data:/data
+      - ./config/redis/cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7003 --cluster-enabled yes --cluster-config-file nodes-7003.conf --cluster-node-timeout 5000 --appendonly yes
+    networks:
+      - infrastructure-scaling
+
+  # Health Check Service
+  health-checker:
+    build:
+      context: ./docker/health-checker
+      dockerfile: Dockerfile
+    container_name: health-checker
+    ports:
+      - "3106:3106"
+    environment:
+      - CONSUL_URL=http://consul-server:8500
+      - CHECK_INTERVAL=10
+      - PROMETHEUS_URL=http://prometheus-scaling:9090
+    volumes:
+      - ./config/health-checker:/app/config
+      - ./logs:/app/logs
+    depends_on:
+      - consul-server
+      - prometheus-scaling
+    networks:
+      - infrastructure-scaling
+
+  # Disaster Recovery Manager
+  dr-manager:
+    build:
+      context: ./docker/dr-manager
+      dockerfile: Dockerfile
+    container_name: dr-manager
+    environment:
+      - CONSUL_URL=http://consul-server:8500
+      - BACKUP_INTERVAL=3600
+      - REPLICATION_CHECK_INTERVAL=300
+    volumes:
+      - ./config/dr-manager:/app/config
+      - ./backups:/app/backups
+      - ./logs:/app/logs
+    depends_on:
+      - consul-server
+      - postgres-primary
+    networks:
+      - infrastructure-scaling
+
+  # Traffic Manager for Multi-Region Routing
+  traffic-manager:
+    build:
+      context: ./docker/traffic-manager
+      dockerfile: Dockerfile
+    container_name: traffic-manager
+    ports:
+      - "3107:3107"
+    environment:
+      - CONSUL_URL=http://consul-server:8500
+      - HEALTH_CHECK_INTERVAL=30
+      - FAILOVER_THRESHOLD=3
+    volumes:
+      - ./config/traffic-manager:/app/config
+      - ./logs:/app/logs
+    depends_on:
+      - consul-server
+      - health-checker
+    networks:
+      - infrastructure-scaling
+
+  # Predictive Scaling Engine
+  predictive-scaler:
+    build:
+      context: ./docker/predictive-scaler
+      dockerfile: Dockerfile
+    container_name: predictive-scaler
+    environment:
+      - PROMETHEUS_URL=http://prometheus-scaling:9090
+      - PREDICTION_MODEL=linear_regression
+      - TRAINING_WINDOW=86400
+      - PREDICTION_HORIZON=3600
+    volumes:
+      - ./config/predictive-scaler:/app/config
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      - prometheus-scaling
+    networks:
+      - infrastructure-scaling
+
+  # Node Exporter for System Metrics
+  node-exporter-scaling:
+    image: prom/node-exporter:latest
+    container_name: node-exporter-scaling
+    ports:
+      - "9101:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - infrastructure-scaling
+
+  # cAdvisor for Container Metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - infrastructure-scaling
+
+volumes:
+  consul_data:
+  nomad_data:
+  haproxy_logs:
+  prometheus_scaling_data:
+  grafana_scaling_data:
+  nginx_edge_cache:
+  postgres_primary_data:
+  postgres_replica1_data:
+  postgres_replica2_data:
+  redis_cluster1_data:
+  redis_cluster2_data:
+  redis_cluster3_data:
+
+networks:
+  infrastructure-scaling:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

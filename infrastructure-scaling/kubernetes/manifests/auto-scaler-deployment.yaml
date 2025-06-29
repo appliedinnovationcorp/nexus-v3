@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-scaler
+  namespace: infrastructure-scaling
+  labels:
+    app: auto-scaler
+    component: scaling
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auto-scaler
+  template:
+    metadata:
+      labels:
+        app: auto-scaler
+        component: scaling
+    spec:
+      serviceAccountName: auto-scaler
+      containers:
+      - name: auto-scaler
+        image: nexus-v3/auto-scaler:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-server:9090"
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: SCALING_INTERVAL
+          value: "30"
+        - name: PREDICTION_WINDOW
+          value: "300"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: auto-scaler-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auto-scaler-service
+  namespace: infrastructure-scaling
+  labels:
+    app: auto-scaler
+spec:
+  selector:
+    app: auto-scaler
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auto-scaler
+  namespace: infrastructure-scaling
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: auto-scaler
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: auto-scaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: auto-scaler
+subjects:
+- kind: ServiceAccount
+  name: auto-scaler
+  namespace: infrastructure-scaling
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auto-scaler-config
+  namespace: infrastructure-scaling
+data:
+  config.yml: |
+    scaling:
+      enabled: true
+      min_instances: 2
+      max_instances: 20
+      target_cpu_utilization: 70
+      target_memory_utilization: 80
+      scale_up_cooldown: 300
+      scale_down_cooldown: 600
+      
+    metrics:
+      prometheus_url: "http://prometheus-server:9090"
+      evaluation_interval: 30
+      
+    predictive:
+      enabled: true
+      model_type: "linear_regression"
+      prediction_horizon: 3600
+      training_window: 86400
+      confidence_threshold: 0.8
+      
+    services:
+      - name: "api-service"
+        min_instances: 2
+        max_instances: 10
+        target_cpu: 70
+        target_memory: 80
+        
+      - name: "web-service"
+        min_instances: 1
+        max_instances: 5
+        target_cpu: 60
+        target_memory: 70
+        
+      - name: "worker-service"
+        min_instances: 1
+        max_instances: 8
+        target_cpu: 80
+        target_memory: 85
