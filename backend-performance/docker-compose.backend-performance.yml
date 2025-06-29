@@ -1,0 +1,392 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with Performance Optimization
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: postgres-primary
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=nexus_user
+      - POSTGRES_PASSWORD=nexus_password
+      - POSTGRES_DB=nexus_db
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./sql/init-performance.sql:/docker-entrypoint-initdb.d/init-performance.sql
+      - ./sql/indexes.sql:/docker-entrypoint-initdb.d/indexes.sql
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - backend-performance
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus_user -d nexus_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # PostgreSQL Read Replica
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: postgres-replica
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=nexus_user
+      - POSTGRES_PASSWORD=nexus_password
+      - POSTGRES_DB=nexus_db
+      - PGUSER=postgres
+      - POSTGRES_PRIMARY_USER=replicator
+      - POSTGRES_PRIMARY_PASSWORD=replicator_password
+      - POSTGRES_PRIMARY_HOST=postgres-primary
+      - POSTGRES_PRIMARY_PORT=5432
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./config/postgres/replica.conf:/etc/postgresql/postgresql.conf
+    depends_on:
+      - postgres-primary
+    networks:
+      - backend-performance
+    command: |
+      bash -c "
+      until pg_isready -h postgres-primary -p 5432 -U nexus_user; do
+        echo 'Waiting for primary database...'
+        sleep 2
+      done
+      echo 'Primary database is ready. Setting up replica...'
+      pg_basebackup -h postgres-primary -D /var/lib/postgresql/data -U replicator -v -P -W
+      echo 'standby_mode = on' >> /var/lib/postgresql/data/recovery.conf
+      echo 'primary_conninfo = \"host=postgres-primary port=5432 user=replicator\"' >> /var/lib/postgresql/data/recovery.conf
+      postgres -c config_file=/etc/postgresql/postgresql.conf
+      "
+
+  # Redis Cluster for Caching
+  redis-master:
+    image: redis:7-alpine
+    container_name: redis-master
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_master_data:/data
+      - ./config/redis/redis-master.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - backend-performance
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis-slave:
+    image: redis:7-alpine
+    container_name: redis-slave
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_slave_data:/data
+      - ./config/redis/redis-slave.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    depends_on:
+      - redis-master
+    networks:
+      - backend-performance
+
+  # Redis Sentinel for High Availability
+  redis-sentinel:
+    image: redis:7-alpine
+    container_name: redis-sentinel
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./config/redis/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    command: redis-sentinel /usr/local/etc/redis/sentinel.conf
+    depends_on:
+      - redis-master
+      - redis-slave
+    networks:
+      - backend-performance
+
+  # Backend API with Performance Optimizations
+  backend-api:
+    build:
+      context: ./docker/backend-api
+      dockerfile: Dockerfile
+    container_name: backend-api
+    ports:
+      - "3100:3100"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://nexus_user:nexus_password@postgres-primary:5432/nexus_db
+      - DATABASE_REPLICA_URL=postgresql://nexus_user:nexus_password@postgres-replica:5432/nexus_db
+      - REDIS_URL=redis://redis-master:6379
+      - REDIS_SENTINEL_URL=redis://redis-sentinel:26379
+      - QUEUE_REDIS_URL=redis://redis-queue:6379
+      - JWT_SECRET=your-super-secret-jwt-key
+      - RATE_LIMIT_WINDOW_MS=900000
+      - RATE_LIMIT_MAX_REQUESTS=100
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - postgres-primary
+      - redis-master
+      - redis-queue
+    networks:
+      - backend-performance
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3100/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for Job Queues
+  redis-queue:
+    image: redis:7-alpine
+    container_name: redis-queue
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_queue_data:/data
+      - ./config/redis/redis-queue.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - backend-performance
+
+  # Bull Queue Dashboard
+  bull-dashboard:
+    build:
+      context: ./docker/bull-dashboard
+      dockerfile: Dockerfile
+    container_name: bull-dashboard
+    ports:
+      - "3101:3101"
+    environment:
+      - REDIS_URL=redis://redis-queue:6379
+    depends_on:
+      - redis-queue
+    networks:
+      - backend-performance
+
+  # Background Job Workers
+  job-worker:
+    build:
+      context: ./docker/job-worker
+      dockerfile: Dockerfile
+    container_name: job-worker
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://nexus_user:nexus_password@postgres-primary:5432/nexus_db
+      - REDIS_URL=redis://redis-master:6379
+      - QUEUE_REDIS_URL=redis://redis-queue:6379
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - postgres-primary
+      - redis-queue
+    networks:
+      - backend-performance
+    deploy:
+      replicas: 3
+
+  # NGINX Load Balancer
+  nginx-lb:
+    build:
+      context: ./docker/nginx-lb
+      dockerfile: Dockerfile
+    container_name: nginx-lb
+    ports:
+      - "8090:80"
+      - "8443:443"
+    volumes:
+      - ./config/nginx/nginx-lb.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - backend-api
+    networks:
+      - backend-performance
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Connection Pool Manager
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    container_name: pgbouncer
+    ports:
+      - "6432:6432"
+    environment:
+      - DATABASES_HOST=postgres-primary
+      - DATABASES_PORT=5432
+      - DATABASES_USER=nexus_user
+      - DATABASES_PASSWORD=nexus_password
+      - DATABASES_DBNAME=nexus_db
+      - POOL_MODE=transaction
+      - SERVER_RESET_QUERY=DISCARD ALL
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=25
+      - MIN_POOL_SIZE=10
+      - RESERVE_POOL_SIZE=5
+      - SERVER_LIFETIME=3600
+      - SERVER_IDLE_TIMEOUT=600
+    volumes:
+      - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
+      - ./config/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt
+    depends_on:
+      - postgres-primary
+    networks:
+      - backend-performance
+
+  # Performance Monitoring
+  backend-monitor:
+    build:
+      context: ./docker/backend-monitor
+      dockerfile: Dockerfile
+    container_name: backend-monitor
+    ports:
+      - "3102:3102"
+    environment:
+      - DATABASE_URL=postgresql://nexus_user:nexus_password@postgres-primary:5432/nexus_db
+      - REDIS_URL=redis://redis-master:6379
+      - MONITOR_INTERVAL=30000
+    volumes:
+      - ./logs:/app/logs
+      - backend_monitor_data:/app/data
+    depends_on:
+      - postgres-primary
+      - redis-master
+    networks:
+      - backend-performance
+
+  # Query Analyzer
+  query-analyzer:
+    build:
+      context: ./docker/query-analyzer
+      dockerfile: Dockerfile
+    container_name: query-analyzer
+    ports:
+      - "3103:3103"
+    environment:
+      - DATABASE_URL=postgresql://nexus_user:nexus_password@postgres-primary:5432/nexus_db
+      - ANALYSIS_INTERVAL=300000
+    volumes:
+      - ./logs:/app/logs
+      - query_analysis_data:/app/data
+    depends_on:
+      - postgres-primary
+    networks:
+      - backend-performance
+
+  # Cache Warmer Service
+  cache-warmer:
+    build:
+      context: ./docker/cache-warmer
+      dockerfile: Dockerfile
+    container_name: cache-warmer
+    environment:
+      - REDIS_URL=redis://redis-master:6379
+      - API_BASE_URL=http://backend-api:3100
+      - WARM_INTERVAL=3600000
+    depends_on:
+      - redis-master
+      - backend-api
+    networks:
+      - backend-performance
+
+  # Grafana for Backend Performance Dashboards
+  backend-grafana:
+    image: grafana/grafana:latest
+    container_name: backend-grafana
+    ports:
+      - "3104:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-clock-panel,redis-datasource
+    volumes:
+      - backend_grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - backend-performance
+
+  # Prometheus for Backend Metrics
+  backend-prometheus:
+    image: prom/prometheus:latest
+    container_name: backend-prometheus
+    ports:
+      - "9093:9090"
+    volumes:
+      - ./config/prometheus/prometheus-backend.yml:/etc/prometheus/prometheus.yml
+      - backend_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - backend-performance
+
+  # Node Exporter for System Metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - backend-performance
+
+  # PostgreSQL Exporter
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      - DATA_SOURCE_NAME=postgresql://nexus_user:nexus_password@postgres-primary:5432/nexus_db?sslmode=disable
+    depends_on:
+      - postgres-primary
+    networks:
+      - backend-performance
+
+  # Redis Exporter
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis-master:6379
+    depends_on:
+      - redis-master
+    networks:
+      - backend-performance
+
+volumes:
+  postgres_primary_data:
+  postgres_replica_data:
+  redis_master_data:
+  redis_slave_data:
+  redis_queue_data:
+  backend_monitor_data:
+  query_analysis_data:
+  backend_grafana_data:
+  backend_prometheus_data:
+
+networks:
+  backend-performance:
+    driver: bridge
