@@ -1,0 +1,348 @@
+version: '3.8'
+
+services:
+  # Storybook for Component Development
+  storybook:
+    build:
+      context: ./docker/storybook
+      dockerfile: Dockerfile
+    container_name: storybook
+    ports:
+      - "6006:6006"
+    environment:
+      - NODE_ENV=development
+      - STORYBOOK_PORT=6006
+    volumes:
+      - ../apps/web:/app
+      - storybook_cache:/app/node_modules/.cache
+    networks:
+      - advanced-tooling
+    command: npm run storybook
+
+  # Chromatic Visual Testing
+  chromatic-server:
+    build:
+      context: ./docker/chromatic-server
+      dockerfile: Dockerfile
+    container_name: chromatic-server
+    ports:
+      - "3300:3300"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://chromatic_user:chromatic_password@chromatic-postgres:5432/chromatic_db
+      - REDIS_URL=redis://chromatic-redis:6379
+      - STORAGE_PATH=/app/storage
+    volumes:
+      - chromatic_storage:/app/storage
+      - ./logs:/app/logs
+    depends_on:
+      - chromatic-postgres
+      - chromatic-redis
+    networks:
+      - advanced-tooling
+
+  # PostgreSQL for Chromatic
+  chromatic-postgres:
+    image: postgres:15-alpine
+    container_name: chromatic-postgres
+    environment:
+      - POSTGRES_USER=chromatic_user
+      - POSTGRES_PASSWORD=chromatic_password
+      - POSTGRES_DB=chromatic_db
+    volumes:
+      - chromatic_postgres_data:/var/lib/postgresql/data
+      - ./sql/chromatic-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - advanced-tooling
+
+  # Redis for Chromatic
+  chromatic-redis:
+    image: redis:7-alpine
+    container_name: chromatic-redis
+    volumes:
+      - chromatic_redis_data:/data
+    networks:
+      - advanced-tooling
+
+  # GraphQL Code Generator
+  graphql-codegen:
+    build:
+      context: ./docker/graphql-codegen
+      dockerfile: Dockerfile
+    container_name: graphql-codegen
+    ports:
+      - "3301:3301"
+    environment:
+      - NODE_ENV=production
+      - GRAPHQL_ENDPOINT=http://backend-api:3100/graphql
+      - OUTPUT_PATH=/app/generated
+    volumes:
+      - ../apps/web/src/generated:/app/generated
+      - ./config/codegen:/app/config
+      - ./logs:/app/logs
+    networks:
+      - advanced-tooling
+
+  # OpenAPI/Swagger Documentation
+  swagger-ui:
+    image: swaggerapi/swagger-ui:latest
+    container_name: swagger-ui
+    ports:
+      - "3302:8080"
+    environment:
+      - SWAGGER_JSON=/app/openapi.json
+      - BASE_URL=/docs
+    volumes:
+      - ./docs/openapi.json:/app/openapi.json
+      - ./config/swagger:/app/config
+    networks:
+      - advanced-tooling
+
+  # API Documentation Generator
+  api-docs-generator:
+    build:
+      context: ./docker/api-docs-generator
+      dockerfile: Dockerfile
+    container_name: api-docs-generator
+    ports:
+      - "3303:3303"
+    environment:
+      - NODE_ENV=production
+      - API_BASE_URL=http://backend-api:3100
+      - DOCS_OUTPUT_PATH=/app/docs
+    volumes:
+      - ./docs:/app/docs
+      - ./config/api-docs:/app/config
+      - ./logs:/app/logs
+    networks:
+      - advanced-tooling
+
+  # Dependency Update Service
+  dependency-updater:
+    build:
+      context: ./docker/dependency-updater
+      dockerfile: Dockerfile
+    container_name: dependency-updater
+    environment:
+      - NODE_ENV=production
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - UPDATE_SCHEDULE=0 2 * * 1  # Weekly on Monday at 2 AM
+      - SECURITY_ONLY=false
+    volumes:
+      - ../:/workspace
+      - ./config/dependency-updater:/app/config
+      - ./logs:/app/logs
+    networks:
+      - advanced-tooling
+
+  # Code Quality Dashboard
+  code-quality-dashboard:
+    build:
+      context: ./docker/code-quality-dashboard
+      dockerfile: Dockerfile
+    container_name: code-quality-dashboard
+    ports:
+      - "3304:3304"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://quality_user:quality_password@quality-postgres:5432/quality_db
+      - REDIS_URL=redis://quality-redis:6379
+    volumes:
+      - ./config/code-quality:/app/config
+      - ./logs:/app/logs
+    depends_on:
+      - quality-postgres
+      - quality-redis
+    networks:
+      - advanced-tooling
+
+  # PostgreSQL for Code Quality
+  quality-postgres:
+    image: postgres:15-alpine
+    container_name: quality-postgres
+    environment:
+      - POSTGRES_USER=quality_user
+      - POSTGRES_PASSWORD=quality_password
+      - POSTGRES_DB=quality_db
+    volumes:
+      - quality_postgres_data:/var/lib/postgresql/data
+      - ./sql/quality-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - advanced-tooling
+
+  # Redis for Code Quality
+  quality-redis:
+    image: redis:7-alpine
+    container_name: quality-redis
+    volumes:
+      - quality_redis_data:/data
+    networks:
+      - advanced-tooling
+
+  # Automated Testing Service
+  automated-testing:
+    build:
+      context: ./docker/automated-testing
+      dockerfile: Dockerfile
+    container_name: automated-testing
+    environment:
+      - NODE_ENV=production
+      - PLAYWRIGHT_BROWSERS_PATH=/app/browsers
+      - TEST_RESULTS_PATH=/app/test-results
+    volumes:
+      - ../:/workspace
+      - playwright_browsers:/app/browsers
+      - test_results:/app/test-results
+      - ./config/testing:/app/config
+      - ./logs:/app/logs
+    networks:
+      - advanced-tooling
+
+  # Semantic Release Service
+  semantic-release:
+    build:
+      context: ./docker/semantic-release
+      dockerfile: Dockerfile
+    container_name: semantic-release
+    environment:
+      - NODE_ENV=production
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - NPM_TOKEN=${NPM_TOKEN}
+    volumes:
+      - ../:/workspace
+      - ./config/semantic-release:/app/config
+      - ./logs:/app/logs
+    networks:
+      - advanced-tooling
+
+  # Bundle Analyzer
+  bundle-analyzer:
+    build:
+      context: ./docker/bundle-analyzer
+      dockerfile: Dockerfile
+    container_name: bundle-analyzer
+    ports:
+      - "3305:3305"
+    environment:
+      - NODE_ENV=production
+      - ANALYZE_PORT=3305
+    volumes:
+      - ../apps/web:/app/source
+      - bundle_reports:/app/reports
+      - ./logs:/app/logs
+    networks:
+      - advanced-tooling
+
+  # Performance Budget Monitor
+  perf-budget-monitor:
+    build:
+      context: ./docker/perf-budget-monitor
+      dockerfile: Dockerfile
+    container_name: perf-budget-monitor
+    ports:
+      - "3306:3306"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://perf_user:perf_password@perf-postgres:5432/perf_db
+      - LIGHTHOUSE_URL=http://lighthouse-ci:9001
+    volumes:
+      - ./config/perf-budget:/app/config
+      - ./logs:/app/logs
+    depends_on:
+      - perf-postgres
+    networks:
+      - advanced-tooling
+
+  # PostgreSQL for Performance Budget
+  perf-postgres:
+    image: postgres:15-alpine
+    container_name: perf-postgres
+    environment:
+      - POSTGRES_USER=perf_user
+      - POSTGRES_PASSWORD=perf_password
+      - POSTGRES_DB=perf_db
+    volumes:
+      - perf_postgres_data:/var/lib/postgresql/data
+      - ./sql/perf-budget-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - advanced-tooling
+
+  # Tooling Orchestrator
+  tooling-orchestrator:
+    build:
+      context: ./docker/tooling-orchestrator
+      dockerfile: Dockerfile
+    container_name: tooling-orchestrator
+    ports:
+      - "3307:3307"
+    environment:
+      - NODE_ENV=production
+      - STORYBOOK_URL=http://storybook:6006
+      - CHROMATIC_URL=http://chromatic-server:3300
+      - CODEGEN_URL=http://graphql-codegen:3301
+      - SWAGGER_URL=http://swagger-ui:8080
+      - QUALITY_URL=http://code-quality-dashboard:3304
+    volumes:
+      - ./config/orchestrator:/app/config
+      - ./logs:/app/logs
+    depends_on:
+      - storybook
+      - chromatic-server
+      - graphql-codegen
+      - swagger-ui
+      - code-quality-dashboard
+    networks:
+      - advanced-tooling
+
+  # Grafana for Tooling Metrics
+  tooling-grafana:
+    image: grafana/grafana:latest
+    container_name: tooling-grafana
+    ports:
+      - "3308:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-clock-panel
+    volumes:
+      - tooling_grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - advanced-tooling
+
+  # Prometheus for Tooling Metrics
+  tooling-prometheus:
+    image: prom/prometheus:latest
+    container_name: tooling-prometheus
+    ports:
+      - "9096:9090"
+    volumes:
+      - ./config/prometheus/prometheus-tooling.yml:/etc/prometheus/prometheus.yml
+      - tooling_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - advanced-tooling
+
+volumes:
+  storybook_cache:
+  chromatic_storage:
+  chromatic_postgres_data:
+  chromatic_redis_data:
+  quality_postgres_data:
+  quality_redis_data:
+  playwright_browsers:
+  test_results:
+  bundle_reports:
+  perf_postgres_data:
+  tooling_grafana_data:
+  tooling_prometheus_data:
+
+networks:
+  advanced-tooling:
+    driver: bridge

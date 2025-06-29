@@ -38,6 +38,7 @@ pnpm test
 - `backend-performance/` - **NEW** Enterprise backend performance with database optimization, caching, and async processing
 - `infrastructure-scaling/` - **NEW** Enterprise infrastructure scaling with auto-scaling, load balancing, and multi-region deployment
 - `react-native-enhancement/` - **NEW** Enterprise React Native enhancement with CodePush, push notifications, and offline-first architecture
+- `advanced-tooling/` - **NEW** Enterprise advanced tooling with Storybook, visual testing, and automated workflows
 
 ## 🛠 Tech Stack
 
@@ -128,6 +129,14 @@ pnpm test
 - **Deep Linking**: Universal links and custom URL scheme handling
 - **Biometric Authentication**: TouchID, FaceID, and fingerprint integration
 - **Performance Monitoring**: Real-time mobile app performance tracking
+
+### Advanced Tooling
+- **Storybook**: Component development with comprehensive addon ecosystem
+- **Visual Testing**: Chromatic-compatible visual regression testing
+- **Git Hooks**: Husky with conventional commits and semantic versioning
+- **Code Generation**: GraphQL Code Generator with TypeScript integration
+- **API Documentation**: OpenAPI/Swagger with automated generation
+- **Dependency Management**: Automated updates with security scanning
 
 ## 🏛️ Compliance System
 
@@ -493,6 +502,46 @@ docker-compose -f react-native-enhancement/docker-compose.react-native-enhanceme
 - **Native Module Integration**: Custom native functionality with optimized bridge calls
 - **Enterprise Security**: Secure storage, certificate pinning, and runtime protection
 
+## 🔧 Advanced Tooling
+
+Enterprise advanced tooling with Storybook, visual testing, and automated workflows:
+
+### 🔧 Advanced Tooling Components
+- **Storybook** (`setup-advanced-tooling.sh`) - Component development with comprehensive addon ecosystem
+- **Visual Testing** - Chromatic-compatible visual regression testing
+- **Git Hooks** - Husky with conventional commits and semantic versioning
+- **Code Generation** - GraphQL Code Generator with TypeScript integration
+- **API Documentation** - OpenAPI/Swagger with automated generation
+- **Dependency Management** - Automated updates with security scanning
+
+### 🚦 Quick Advanced Tooling Setup
+```bash
+# Initialize advanced tooling system
+./advanced-tooling/scripts/setup-advanced-tooling.sh
+
+# Start advanced tooling services
+docker-compose -f advanced-tooling/docker-compose.advanced-tooling.yml up -d
+
+# Access advanced tooling services
+# - Storybook: http://localhost:6006
+# - Chromatic Server: http://localhost:3300
+# - GraphQL CodeGen: http://localhost:3301
+# - Swagger UI: http://localhost:3302
+# - Code Quality Dashboard: http://localhost:3304
+# - Bundle Analyzer: http://localhost:3305
+# - Tooling Grafana: http://localhost:3308
+```
+
+### 🎯 Advanced Tooling Features
+- **Component Development**: Storybook with isolated component development environment
+- **Visual Regression Testing**: Automated UI component testing with pixel-perfect comparison
+- **Code Quality Automation**: ESLint, Prettier, TypeScript, and automated quality checks
+- **Conventional Commits**: Standardized commit messages with semantic versioning
+- **Automated Releases**: Semantic release with changelog generation and version management
+- **GraphQL Code Generation**: Automatic TypeScript types and React hooks generation
+- **API Documentation**: Interactive OpenAPI/Swagger documentation with automated generation
+- **Dependency Management**: Automated dependency updates with security vulnerability scanning
+
 ## 📚 Documentation
 
 - [Architecture](./docs/architecture.md)
@@ -507,6 +556,7 @@ docker-compose -f react-native-enhancement/docker-compose.react-native-enhanceme
 - [Backend Performance](./BACKEND-PERFORMANCE-SYSTEM-REPORT.md) - **NEW** Enterprise backend performance with database optimization, caching, and async processing
 - [Infrastructure Scaling](./INFRASTRUCTURE-SCALING-SYSTEM-REPORT.md) - **NEW** Enterprise infrastructure scaling with auto-scaling, load balancing, and multi-region deployment
 - [React Native Enhancement](./REACT-NATIVE-ENHANCEMENT-SYSTEM-REPORT.md) - **NEW** Enterprise React Native enhancement with CodePush, push notifications, and offline-first architecture
+- [Advanced Tooling](./ADVANCED-TOOLING-SYSTEM-REPORT.md) - **NEW** Enterprise advanced tooling with Storybook, visual testing, and automated workflows
 
 - [Container Orchestration](./CONTAINER-ORCHESTRATION-REPORT.md) - **NEW** Enterprise Kubernetes platform
 
