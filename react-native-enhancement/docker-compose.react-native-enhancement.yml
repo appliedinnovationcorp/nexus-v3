@@ -1,0 +1,395 @@
+version: '3.8'
+
+services:
+  # CodePush Server for Over-the-Air Updates
+  codepush-server:
+    build:
+      context: ./docker/codepush-server
+      dockerfile: Dockerfile
+    container_name: codepush-server
+    ports:
+      - "3200:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://codepush_user:codepush_password@codepush-postgres:5432/codepush_db
+      - REDIS_URL=redis://codepush-redis:6379
+      - JWT_SECRET=your-super-secret-jwt-key-for-codepush
+      - STORAGE_TYPE=local
+      - STORAGE_PATH=/app/storage
+    volumes:
+      - codepush_storage:/app/storage
+      - ./logs:/app/logs
+    depends_on:
+      - codepush-postgres
+      - codepush-redis
+    networks:
+      - react-native-enhancement
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL for CodePush Server
+  codepush-postgres:
+    image: postgres:15-alpine
+    container_name: codepush-postgres
+    environment:
+      - POSTGRES_USER=codepush_user
+      - POSTGRES_PASSWORD=codepush_password
+      - POSTGRES_DB=codepush_db
+    volumes:
+      - codepush_postgres_data:/var/lib/postgresql/data
+      - ./sql/codepush-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - react-native-enhancement
+
+  # Redis for CodePush Caching
+  codepush-redis:
+    image: redis:7-alpine
+    container_name: codepush-redis
+    volumes:
+      - codepush_redis_data:/data
+      - ./config/redis/codepush-redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - react-native-enhancement
+
+  # Push Notification Server
+  push-notification-server:
+    build:
+      context: ./docker/push-notification-server
+      dockerfile: Dockerfile
+    container_name: push-notification-server
+    ports:
+      - "3201:3001"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://push_user:push_password@push-postgres:5432/push_db
+      - REDIS_URL=redis://push-redis:6379
+      - FCM_SERVER_KEY=${FCM_SERVER_KEY}
+      - APNS_KEY_ID=${APNS_KEY_ID}
+      - APNS_TEAM_ID=${APNS_TEAM_ID}
+      - APNS_BUNDLE_ID=${APNS_BUNDLE_ID}
+    volumes:
+      - ./config/push-notifications:/app/config
+      - ./logs:/app/logs
+      - push_storage:/app/storage
+    depends_on:
+      - push-postgres
+      - push-redis
+    networks:
+      - react-native-enhancement
+
+  # PostgreSQL for Push Notifications
+  push-postgres:
+    image: postgres:15-alpine
+    container_name: push-postgres
+    environment:
+      - POSTGRES_USER=push_user
+      - POSTGRES_PASSWORD=push_password
+      - POSTGRES_DB=push_db
+    volumes:
+      - push_postgres_data:/var/lib/postgresql/data
+      - ./sql/push-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - react-native-enhancement
+
+  # Redis for Push Notifications
+  push-redis:
+    image: redis:7-alpine
+    container_name: push-redis
+    volumes:
+      - push_redis_data:/data
+    networks:
+      - react-native-enhancement
+
+  # Offline Sync Server
+  offline-sync-server:
+    build:
+      context: ./docker/offline-sync-server
+      dockerfile: Dockerfile
+    container_name: offline-sync-server
+    ports:
+      - "3202:3002"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://sync_user:sync_password@sync-postgres:5432/sync_db
+      - REDIS_URL=redis://sync-redis:6379
+      - CONFLICT_RESOLUTION_STRATEGY=last_write_wins
+    volumes:
+      - ./config/offline-sync:/app/config
+      - ./logs:/app/logs
+      - sync_storage:/app/storage
+    depends_on:
+      - sync-postgres
+      - sync-redis
+    networks:
+      - react-native-enhancement
+
+  # PostgreSQL for Offline Sync
+  sync-postgres:
+    image: postgres:15-alpine
+    container_name: sync-postgres
+    environment:
+      - POSTGRES_USER=sync_user
+      - POSTGRES_PASSWORD=sync_password
+      - POSTGRES_DB=sync_db
+    volumes:
+      - sync_postgres_data:/var/lib/postgresql/data
+      - ./sql/sync-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - react-native-enhancement
+
+  # Redis for Offline Sync
+  sync-redis:
+    image: redis:7-alpine
+    container_name: sync-redis
+    volumes:
+      - sync_redis_data:/data
+    networks:
+      - react-native-enhancement
+
+  # Deep Linking Service
+  deep-linking-service:
+    build:
+      context: ./docker/deep-linking-service
+      dockerfile: Dockerfile
+    container_name: deep-linking-service
+    ports:
+      - "3203:3003"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://link_user:link_password@link-postgres:5432/link_db
+      - REDIS_URL=redis://link-redis:6379
+      - BASE_URL=https://nexus-v3.com
+    volumes:
+      - ./config/deep-linking:/app/config
+      - ./logs:/app/logs
+    depends_on:
+      - link-postgres
+      - link-redis
+    networks:
+      - react-native-enhancement
+
+  # PostgreSQL for Deep Linking
+  link-postgres:
+    image: postgres:15-alpine
+    container_name: link-postgres
+    environment:
+      - POSTGRES_USER=link_user
+      - POSTGRES_PASSWORD=link_password
+      - POSTGRES_DB=link_db
+    volumes:
+      - link_postgres_data:/var/lib/postgresql/data
+      - ./sql/link-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - react-native-enhancement
+
+  # Redis for Deep Linking
+  link-redis:
+    image: redis:7-alpine
+    container_name: link-redis
+    volumes:
+      - link_redis_data:/data
+    networks:
+      - react-native-enhancement
+
+  # Performance Monitor for React Native
+  rn-performance-monitor:
+    build:
+      context: ./docker/rn-performance-monitor
+      dockerfile: Dockerfile
+    container_name: rn-performance-monitor
+    ports:
+      - "3204:3004"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://perf_user:perf_password@perf-postgres:5432/perf_db
+      - REDIS_URL=redis://perf-redis:6379
+      - PROMETHEUS_URL=http://rn-prometheus:9090
+    volumes:
+      - ./config/performance:/app/config
+      - ./logs:/app/logs
+      - perf_storage:/app/storage
+    depends_on:
+      - perf-postgres
+      - perf-redis
+      - rn-prometheus
+    networks:
+      - react-native-enhancement
+
+  # PostgreSQL for Performance Monitoring
+  perf-postgres:
+    image: postgres:15-alpine
+    container_name: perf-postgres
+    environment:
+      - POSTGRES_USER=perf_user
+      - POSTGRES_PASSWORD=perf_password
+      - POSTGRES_DB=perf_db
+    volumes:
+      - perf_postgres_data:/var/lib/postgresql/data
+      - ./sql/perf-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - react-native-enhancement
+
+  # Redis for Performance Monitoring
+  perf-redis:
+    image: redis:7-alpine
+    container_name: perf-redis
+    volumes:
+      - perf_redis_data:/data
+    networks:
+      - react-native-enhancement
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: ./docker/auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    ports:
+      - "3205:3005"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://auth_user:auth_password@auth-postgres:5432/auth_db
+      - REDIS_URL=redis://auth-redis:6379
+      - JWT_SECRET=your-super-secret-jwt-key-for-auth
+      - BIOMETRIC_ENCRYPTION_KEY=your-biometric-encryption-key
+    volumes:
+      - ./config/auth:/app/config
+      - ./logs:/app/logs
+      - auth_storage:/app/storage
+    depends_on:
+      - auth-postgres
+      - auth-redis
+    networks:
+      - react-native-enhancement
+
+  # PostgreSQL for Authentication
+  auth-postgres:
+    image: postgres:15-alpine
+    container_name: auth-postgres
+    environment:
+      - POSTGRES_USER=auth_user
+      - POSTGRES_PASSWORD=auth_password
+      - POSTGRES_DB=auth_db
+    volumes:
+      - auth_postgres_data:/var/lib/postgresql/data
+      - ./sql/auth-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - react-native-enhancement
+
+  # Redis for Authentication
+  auth-redis:
+    image: redis:7-alpine
+    container_name: auth-redis
+    volumes:
+      - auth_redis_data:/data
+    networks:
+      - react-native-enhancement
+
+  # React Native Build Server
+  rn-build-server:
+    build:
+      context: ./docker/rn-build-server
+      dockerfile: Dockerfile
+    container_name: rn-build-server
+    ports:
+      - "3206:3006"
+    environment:
+      - NODE_ENV=production
+      - ANDROID_HOME=/opt/android-sdk
+      - JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+    volumes:
+      - ./config/build:/app/config
+      - ./logs:/app/logs
+      - rn_builds:/app/builds
+      - android_sdk:/opt/android-sdk
+      - gradle_cache:/root/.gradle
+    networks:
+      - react-native-enhancement
+
+  # Prometheus for React Native Metrics
+  rn-prometheus:
+    image: prom/prometheus:latest
+    container_name: rn-prometheus
+    ports:
+      - "9095:9090"
+    volumes:
+      - ./config/prometheus/prometheus-rn.yml:/etc/prometheus/prometheus.yml
+      - rn_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - react-native-enhancement
+
+  # Grafana for React Native Dashboards
+  rn-grafana:
+    image: grafana/grafana:latest
+    container_name: rn-grafana
+    ports:
+      - "3207:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+    volumes:
+      - rn_grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - react-native-enhancement
+
+  # NGINX for React Native Services
+  rn-nginx:
+    image: nginx:alpine
+    container_name: rn-nginx
+    ports:
+      - "8083:80"
+      - "8446:443"
+    volumes:
+      - ./config/nginx/rn-nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/rn-sites:/etc/nginx/sites-enabled
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - codepush-server
+      - push-notification-server
+      - offline-sync-server
+      - deep-linking-service
+      - rn-performance-monitor
+      - auth-service
+    networks:
+      - react-native-enhancement
+
+volumes:
+  codepush_storage:
+  codepush_postgres_data:
+  codepush_redis_data:
+  push_storage:
+  push_postgres_data:
+  push_redis_data:
+  sync_storage:
+  sync_postgres_data:
+  sync_redis_data:
+  link_postgres_data:
+  link_redis_data:
+  perf_storage:
+  perf_postgres_data:
+  perf_redis_data:
+  auth_storage:
+  auth_postgres_data:
+  auth_redis_data:
+  rn_builds:
+  android_sdk:
+  gradle_cache:
+  rn_prometheus_data:
+  rn_grafana_data:
+
+networks:
+  react-native-enhancement:
+    driver: bridge
