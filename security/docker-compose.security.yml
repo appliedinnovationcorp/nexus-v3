@@ -1,0 +1,319 @@
+version: '3.8'
+
+services:
+  # HashiCorp Vault for Secrets Management
+  vault:
+    image: vault:1.15
+    container_name: vault
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: myroot
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_API_ADDR: http://0.0.0.0:8200
+      VAULT_ADDRESS: http://0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault-data:/vault/data
+      - vault-logs:/vault/logs
+      - ./config/vault:/vault/config
+      - ./scripts/vault:/vault/scripts
+    networks:
+      - security-network
+    healthcheck:
+      test: ["CMD-SHELL", "vault status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    command: >
+      sh -c "vault server -dev -dev-root-token-id=myroot -dev-listen-address=0.0.0.0:8200"
+
+  # Vault Agent for Secret Injection
+  vault-agent:
+    image: vault:1.15
+    container_name: vault-agent
+    depends_on:
+      vault:
+        condition: service_healthy
+    volumes:
+      - ./config/vault-agent:/vault/config
+      - vault-secrets:/vault/secrets
+    networks:
+      - security-network
+    command: vault agent -config=/vault/config/agent.hcl
+
+  # OWASP ZAP for Security Scanning
+  owasp-zap:
+    image: owasp/zap2docker-stable:2.14.0
+    container_name: owasp-zap
+    ports:
+      - "8090:8080"
+      - "8091:8090"
+    volumes:
+      - ./config/zap:/zap/wrk
+      - ./reports/zap:/zap/reports
+    networks:
+      - security-network
+    command: zap-webswing.sh
+    environment:
+      ZAP_PORT: 8080
+
+  # SonarQube for Static Code Analysis
+  sonarqube-db:
+    image: postgres:15-alpine
+    container_name: sonarqube-db
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar_secure_pass
+      POSTGRES_DB: sonar
+    volumes:
+      - sonarqube-db-data:/var/lib/postgresql/data
+    networks:
+      - security-network
+
+  sonarqube:
+    image: sonarqube:10.2-community
+    container_name: sonarqube
+    depends_on:
+      - sonarqube-db
+    ports:
+      - "9000:9000"
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonarqube-db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar_secure_pass
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    networks:
+      - security-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/api/system/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Snyk for Dependency Scanning
+  snyk-monitor:
+    image: snyk/snyk:node
+    container_name: snyk-monitor
+    volumes:
+      - ./:/app
+      - ./reports/snyk:/reports
+    working_dir: /app
+    environment:
+      SNYK_TOKEN: ${SNYK_TOKEN}
+    networks:
+      - security-network
+    profiles:
+      - scanning
+    command: >
+      sh -c "
+        snyk auth ${SNYK_TOKEN} &&
+        snyk test --json > /reports/snyk-test.json &&
+        snyk monitor
+      "
+
+  # OWASP Dependency Check
+  dependency-check:
+    image: owasp/dependency-check:8.4.0
+    container_name: dependency-check
+    volumes:
+      - ./:/src
+      - ./reports/dependency-check:/reports
+      - dependency-check-data:/usr/share/dependency-check/data
+    networks:
+      - security-network
+    profiles:
+      - scanning
+    command: >
+      --scan /src
+      --format ALL
+      --out /reports
+      --project "AIC Security Scan"
+      --enableRetired
+
+  # Security Hardened Application
+  security-service:
+    build:
+      context: ./services/security-service
+      dockerfile: Dockerfile
+    container_name: security-service
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: myroot
+      DATABASE_URL: postgresql://app_user:app_pass@postgres-primary:5432/aic_primary
+      REDIS_URL: redis://redis-auth:6379
+      CSP_NONCE_SECRET: ${CSP_NONCE_SECRET}
+      SECURITY_HEADERS_ENABLED: true
+      INPUT_VALIDATION_STRICT: true
+      XSS_PROTECTION_ENABLED: true
+      SQL_INJECTION_PROTECTION: true
+    ports:
+      - "3010:3000"
+    volumes:
+      - ./services/security-service:/app
+      - vault-secrets:/vault/secrets:ro
+      - /app/node_modules
+    depends_on:
+      - vault
+      - sonarqube
+    networks:
+      - security-network
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Security Scanner Orchestrator
+  security-scanner:
+    build:
+      context: ./services/security-scanner
+      dockerfile: Dockerfile
+    container_name: security-scanner
+    environment:
+      ZAP_URL: http://owasp-zap:8080
+      SONARQUBE_URL: http://sonarqube:9000
+      SONARQUBE_TOKEN: ${SONARQUBE_TOKEN}
+      TARGET_URL: http://security-service:3000
+      SCAN_SCHEDULE: "0 2 * * *"
+    volumes:
+      - ./reports:/reports
+      - ./config/scanner:/config
+    depends_on:
+      - owasp-zap
+      - sonarqube
+      - security-service
+    networks:
+      - security-network
+    profiles:
+      - scanning
+
+  # Falco for Runtime Security Monitoring
+  falco:
+    image: falcosecurity/falco-no-driver:0.36.0
+    container_name: falco
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - /dev:/host/dev
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - /etc:/host/etc:ro
+      - ./config/falco:/etc/falco
+    networks:
+      - security-network
+    command: falco --modern-bpf
+
+  # Security Metrics Collector
+  security-exporter:
+    build:
+      context: ./services/security-exporter
+      dockerfile: Dockerfile
+    container_name: security-exporter
+    ports:
+      - "9200:9200"
+    environment:
+      VAULT_ADDR: http://vault:8200
+      SONARQUBE_URL: http://sonarqube:9000
+      ZAP_URL: http://owasp-zap:8080
+    volumes:
+      - ./reports:/reports:ro
+    depends_on:
+      - vault
+      - sonarqube
+      - owasp-zap
+    networks:
+      - security-network
+
+  # Grafana for Security Dashboard
+  grafana-security:
+    image: grafana/grafana:10.1.0
+    container_name: grafana-security
+    ports:
+      - "3003:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana-security-data:/var/lib/grafana
+      - ./config/grafana-security/dashboards:/etc/grafana/provisioning/dashboards
+      - ./config/grafana-security/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - security-network
+
+  # Prometheus for Security Metrics
+  prometheus-security:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus-security
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./config/prometheus-security/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-security-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - security-network
+
+  # Nginx with Security Headers
+  nginx-security:
+    image: nginx:alpine
+    container_name: nginx-security
+    ports:
+      - "8443:443"
+      - "8080:80"
+    volumes:
+      - ./config/nginx-security/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx-security/ssl:/etc/nginx/ssl
+      - ./config/nginx-security/security.conf:/etc/nginx/conf.d/security.conf
+    depends_on:
+      - security-service
+    networks:
+      - security-network
+
+  # ModSecurity WAF
+  modsecurity:
+    image: owasp/modsecurity-crs:nginx
+    container_name: modsecurity
+    ports:
+      - "8081:80"
+    volumes:
+      - ./config/modsecurity:/etc/modsecurity.d
+    environment:
+      BACKEND: http://security-service:3000
+      PARANOIA: 2
+      ANOMALY_INBOUND: 5
+      ANOMALY_OUTBOUND: 4
+    networks:
+      - security-network
+
+volumes:
+  vault-data:
+  vault-logs:
+  vault-secrets:
+  sonarqube-db-data:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:
+  dependency-check-data:
+  grafana-security-data:
+  prometheus-security-data:
+
+networks:
+  security-network:
+    driver: bridge
+  microservices-network:
+    external: true
