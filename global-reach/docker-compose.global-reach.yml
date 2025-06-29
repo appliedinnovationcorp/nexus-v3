@@ -1,0 +1,329 @@
+version: '3.8'
+
+services:
+  # NGINX CDN with Global Edge Caching
+  nginx-cdn:
+    image: nginx:alpine
+    container_name: nexus-nginx-cdn
+    ports:
+      - "8084:80"
+      - "8443:443"
+    volumes:
+      - ./config/nginx-cdn.conf:/etc/nginx/nginx.conf
+      - ./config/ssl:/etc/nginx/ssl
+      - ./content-delivery/static:/usr/share/nginx/html/static
+      - ./content-delivery/cache:/var/cache/nginx
+    environment:
+      - NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates
+      - NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/conf.d
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Varnish Cache for Global Content Acceleration
+  varnish-cache:
+    image: varnish:7.4-alpine
+    container_name: nexus-varnish-cache
+    ports:
+      - "8085:80"
+      - "6082:6082"
+    volumes:
+      - ./config/varnish.vcl:/etc/varnish/default.vcl
+      - ./content-delivery/varnish-cache:/var/lib/varnish
+    environment:
+      - VARNISH_SIZE=256M
+      - VARNISH_TTL=120
+    command: ["varnishd", "-F", "-f", "/etc/varnish/default.vcl", "-s", "malloc,256M", "-a", "0.0.0.0:80"]
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Redis for Global Session and Cache Management
+  redis-global:
+    image: redis:7-alpine
+    container_name: nexus-redis-global
+    ports:
+      - "6380:6379"
+    volumes:
+      - ./config/redis-global.conf:/usr/local/etc/redis/redis.conf
+      - redis-global-data:/data
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # i18n Translation Management Service
+  i18n-service:
+    build:
+      context: ./docker/i18n-service
+      dockerfile: Dockerfile
+    container_name: nexus-i18n-service
+    ports:
+      - "3500:3000"
+    volumes:
+      - ./i18n/translations:/app/translations
+      - ./i18n/config:/app/config
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-global:6379
+      - DEFAULT_LOCALE=en
+      - SUPPORTED_LOCALES=en,es,fr,de,ja,zh,ar,he,ru,pt,it,ko,hi,th,vi
+    depends_on:
+      - redis-global
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Currency Exchange Service
+  currency-service:
+    build:
+      context: ./docker/currency-service
+      dockerfile: Dockerfile
+    container_name: nexus-currency-service
+    ports:
+      - "3501:3000"
+    volumes:
+      - ./currency/config:/app/config
+      - ./currency/data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-global:6379
+      - UPDATE_INTERVAL=3600000
+      - BASE_CURRENCY=USD
+    depends_on:
+      - redis-global
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Timezone Service
+  timezone-service:
+    build:
+      context: ./docker/timezone-service
+      dockerfile: Dockerfile
+    container_name: nexus-timezone-service
+    ports:
+      - "3502:3000"
+    volumes:
+      - ./timezone/config:/app/config
+      - ./timezone/data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-global:6379
+      - DEFAULT_TIMEZONE=UTC
+    depends_on:
+      - redis-global
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # RTL Layout Service
+  rtl-service:
+    build:
+      context: ./docker/rtl-service
+      dockerfile: Dockerfile
+    container_name: nexus-rtl-service
+    ports:
+      - "3503:3000"
+    volumes:
+      - ./rtl/config:/app/config
+      - ./rtl/styles:/app/styles
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-global:6379
+      - RTL_LANGUAGES=ar,he,fa,ur,ku,sd
+    depends_on:
+      - redis-global
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Localization Service
+  localization-service:
+    build:
+      context: ./docker/localization-service
+      dockerfile: Dockerfile
+    container_name: nexus-localization-service
+    ports:
+      - "3504:3000"
+    volumes:
+      - ./localization/config:/app/config
+      - ./localization/data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-global:6379
+      - I18N_SERVICE_URL=http://i18n-service:3000
+      - CURRENCY_SERVICE_URL=http://currency-service:3000
+      - TIMEZONE_SERVICE_URL=http://timezone-service:3000
+      - RTL_SERVICE_URL=http://rtl-service:3000
+    depends_on:
+      - redis-global
+      - i18n-service
+      - currency-service
+      - timezone-service
+      - rtl-service
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Content Delivery Optimization Service
+  cdn-optimizer:
+    build:
+      context: ./docker/cdn-optimizer
+      dockerfile: Dockerfile
+    container_name: nexus-cdn-optimizer
+    ports:
+      - "3505:3000"
+    volumes:
+      - ./content-delivery/config:/app/config
+      - ./content-delivery/static:/app/static
+      - ./content-delivery/optimized:/app/optimized
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-global:6379
+      - OPTIMIZATION_LEVEL=high
+      - WEBP_QUALITY=85
+      - AVIF_QUALITY=80
+    depends_on:
+      - redis-global
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Global Reach API Gateway
+  global-reach-gateway:
+    build:
+      context: ./docker/global-reach-gateway
+      dockerfile: Dockerfile
+    container_name: nexus-global-reach-gateway
+    ports:
+      - "3506:3000"
+    volumes:
+      - ./config/gateway-config.json:/app/config/gateway-config.json
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-global:6379
+      - I18N_SERVICE_URL=http://i18n-service:3000
+      - CURRENCY_SERVICE_URL=http://currency-service:3000
+      - TIMEZONE_SERVICE_URL=http://timezone-service:3000
+      - RTL_SERVICE_URL=http://rtl-service:3000
+      - LOCALIZATION_SERVICE_URL=http://localization-service:3000
+      - CDN_OPTIMIZER_URL=http://cdn-optimizer:3000
+    depends_on:
+      - redis-global
+      - i18n-service
+      - currency-service
+      - timezone-service
+      - rtl-service
+      - localization-service
+      - cdn-optimizer
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Global Reach Dashboard
+  global-reach-dashboard:
+    build:
+      context: ./docker/global-reach-dashboard
+      dockerfile: Dockerfile
+    container_name: nexus-global-reach-dashboard
+    ports:
+      - "3507:3000"
+    volumes:
+      - ./config/dashboard-config.json:/app/config/dashboard-config.json
+    environment:
+      - NODE_ENV=production
+      - GATEWAY_URL=http://global-reach-gateway:3000
+    depends_on:
+      - global-reach-gateway
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Prometheus for Global Reach Monitoring
+  prometheus-global:
+    image: prom/prometheus:latest
+    container_name: nexus-prometheus-global
+    ports:
+      - "9095:9090"
+    volumes:
+      - ./config/prometheus-global.yml:/etc/prometheus/prometheus.yml
+      - prometheus-global-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Grafana for Global Reach Visualization
+  grafana-global:
+    image: grafana/grafana:latest
+    container_name: nexus-grafana-global
+    ports:
+      - "3310:3000"
+    volumes:
+      - ./config/grafana-global.ini:/etc/grafana/grafana.ini
+      - ./config/grafana-dashboards:/var/lib/grafana/dashboards
+      - ./config/grafana-provisioning:/etc/grafana/provisioning
+      - grafana-global-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-worldmap-panel,grafana-piechart-panel
+    depends_on:
+      - prometheus-global
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # ElasticSearch for Global Analytics
+  elasticsearch-global:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: nexus-elasticsearch-global
+    ports:
+      - "9201:9200"
+      - "9301:9300"
+    volumes:
+      - elasticsearch-global-data:/usr/share/elasticsearch/data
+      - ./config/elasticsearch-global.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+  # Kibana for Global Analytics Visualization
+  kibana-global:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: nexus-kibana-global
+    ports:
+      - "5602:5601"
+    volumes:
+      - ./config/kibana-global.yml:/usr/share/kibana/config/kibana.yml
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch-global:9200
+    depends_on:
+      - elasticsearch-global
+    networks:
+      - global-reach-network
+    restart: unless-stopped
+
+volumes:
+  redis-global-data:
+  prometheus-global-data:
+  grafana-global-data:
+  elasticsearch-global-data:
+
+networks:
+  global-reach-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
