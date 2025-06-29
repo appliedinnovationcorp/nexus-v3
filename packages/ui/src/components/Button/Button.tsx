@@ -32,27 +32,79 @@ const buttonVariants = cva(
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
+  /**
+   * Render as a child element (using Radix Slot)
+   */
   asChild?: boolean
+  /**
+   * Show loading spinner and disable the button
+   */
   loading?: boolean
+  /**
+   * Icon to display before the button text
+   */
+  leftIcon?: React.ReactNode
+  /**
+   * Icon to display after the button text
+   */
+  rightIcon?: React.ReactNode
 }
 
+/**
+ * Button component with multiple variants and states
+ * 
+ * @example
+ * // Basic button
+ * <Button>Click me</Button>
+ * 
+ * @example
+ * // Button with loading state
+ * <Button loading>Loading...</Button>
+ * 
+ * @example
+ * // Button with icons
+ * <Button leftIcon={<Icon />} rightIcon={<Icon />}>
+ *   Button with icons
+ * </Button>
+ * 
+ * @example
+ * // Destructive button
+ * <Button variant="destructive">Delete</Button>
+ */
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, loading = false, disabled, children, ...props }, ref) => {
+  ({ 
+    className, 
+    variant, 
+    size, 
+    asChild = false, 
+    loading = false, 
+    leftIcon,
+    rightIcon,
+    disabled, 
+    children, 
+    ...props 
+  }, ref) => {
     const Comp = asChild ? Slot : 'button'
+    const isDisabled = disabled || loading
     
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
-        disabled={disabled || loading}
+        disabled={isDisabled}
+        aria-disabled={isDisabled}
         {...props}
       >
         {loading && (
           <svg
-            className="mr-2 h-4 w-4 animate-spin"
+            className={cn(
+              "h-4 w-4 animate-spin",
+              (leftIcon || rightIcon || children) && "mr-2"
+            )}
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
             viewBox="0 0 24 24"
+            aria-hidden="true"
           >
             <circle
               className="opacity-25"
@@ -69,7 +121,20 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
             />
           </svg>
         )}
+        
+        {!loading && leftIcon && (
+          <span className={cn("inline-flex", children && "mr-2")} aria-hidden="true">
+            {leftIcon}
+          </span>
+        )}
+        
         {children}
+        
+        {!loading && rightIcon && (
+          <span className={cn("inline-flex", children && "ml-2")} aria-hidden="true">
+            {rightIcon}
+          </span>
+        )}
       </Comp>
     )
   }
