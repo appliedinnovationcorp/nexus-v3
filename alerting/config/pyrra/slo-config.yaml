@@ -1,0 +1,140 @@
+# Pyrra SLO Configuration
+# Service Level Objectives with Error Budgets
+
+apiVersion: pyrra.dev/v1alpha1
+kind: ServiceLevelObjective
+metadata:
+  name: api-availability
+  namespace: default
+  labels:
+    team: backend
+    service: api-gateway
+spec:
+  target: "99.9"  # 99.9% availability
+  window: 30d     # 30-day rolling window
+  description: "API Gateway availability SLO"
+  indicator:
+    ratio:
+      errors:
+        metric: http_requests_total{job="api-gateway",code=~"5.."}
+      total:
+        metric: http_requests_total{job="api-gateway"}
+  alerting:
+    name: ApiGatewayAvailability
+    page_alert:
+      labels:
+        severity: critical
+        team: backend
+        service: api-gateway
+        type: slo_violation
+      annotations:
+        summary: "API Gateway SLO violation"
+        description: "API Gateway availability is below 99.9% target"
+        runbook_url: "https://runbooks.nexus-v3.local/api-gateway-availability"
+    ticket_alert:
+      labels:
+        severity: warning
+        team: backend
+        service: api-gateway
+        type: slo_burn_rate
+      annotations:
+        summary: "API Gateway error budget burn rate high"
+        description: "API Gateway is consuming error budget faster than expected"
+
+---
+apiVersion: pyrra.dev/v1alpha1
+kind: ServiceLevelObjective
+metadata:
+  name: api-latency
+  namespace: default
+  labels:
+    team: backend
+    service: api-gateway
+spec:
+  target: "95"    # 95% of requests under 500ms
+  window: 7d      # 7-day rolling window
+  description: "API Gateway latency SLO - 95% of requests under 500ms"
+  indicator:
+    ratio:
+      errors:
+        metric: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="api-gateway"}[5m])) > 0.5
+      total:
+        metric: rate(http_requests_total{job="api-gateway"}[5m])
+  alerting:
+    name: ApiGatewayLatency
+    page_alert:
+      labels:
+        severity: critical
+        team: backend
+        service: api-gateway
+        type: slo_violation
+      annotations:
+        summary: "API Gateway latency SLO violation"
+        description: "95th percentile latency is above 500ms target"
+        runbook_url: "https://runbooks.nexus-v3.local/api-gateway-latency"
+
+---
+apiVersion: pyrra.dev/v1alpha1
+kind: ServiceLevelObjective
+metadata:
+  name: database-availability
+  namespace: default
+  labels:
+    team: platform
+    service: database
+spec:
+  target: "99.95"  # 99.95% availability
+  window: 30d      # 30-day rolling window
+  description: "Database availability SLO"
+  indicator:
+    ratio:
+      errors:
+        metric: up{job="postgres-exporter"} == 0
+      total:
+        metric: up{job="postgres-exporter"}
+  alerting:
+    name: DatabaseAvailability
+    page_alert:
+      labels:
+        severity: critical
+        team: platform
+        service: database
+        type: slo_violation
+        priority: P0
+      annotations:
+        summary: "Database availability SLO violation"
+        description: "Database availability is below 99.95% target"
+        runbook_url: "https://runbooks.nexus-v3.local/database-availability"
+
+---
+apiVersion: pyrra.dev/v1alpha1
+kind: ServiceLevelObjective
+metadata:
+  name: user-journey-checkout
+  namespace: default
+  labels:
+    team: product
+    service: checkout
+spec:
+  target: "99.5"   # 99.5% successful checkouts
+  window: 7d       # 7-day rolling window
+  description: "Checkout user journey success rate SLO"
+  indicator:
+    ratio:
+      errors:
+        metric: checkout_attempts_total{status="failed"}
+      total:
+        metric: checkout_attempts_total
+  alerting:
+    name: CheckoutUserJourney
+    page_alert:
+      labels:
+        severity: critical
+        team: product
+        service: checkout
+        type: slo_violation
+        business_impact: high
+      annotations:
+        summary: "Checkout success rate SLO violation"
+        description: "Checkout success rate is below 99.5% target - revenue impact"
+        runbook_url: "https://runbooks.nexus-v3.local/checkout-success-rate"

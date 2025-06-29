@@ -1,0 +1,202 @@
+# Sloth Performance Budget Configuration
+# Performance budgets with regression detection
+
+version: "prometheus/v1"
+service: "performance-budgets"
+labels:
+  team: "performance"
+  repository: "nexus-v3"
+
+slos:
+  # Frontend Performance Budget
+  - name: "frontend-performance-budget"
+    objective: 95.0
+    description: "Frontend performance budget - 95% of page loads under performance budget"
+    sli:
+      events:
+        error_query: |
+          (
+            histogram_quantile(0.95, rate(page_load_duration_seconds_bucket{app="web-app"}[5m])) > 2.0
+            or
+            histogram_quantile(0.95, rate(first_contentful_paint_seconds_bucket{app="web-app"}[5m])) > 1.5
+            or
+            histogram_quantile(0.95, rate(largest_contentful_paint_seconds_bucket{app="web-app"}[5m])) > 2.5
+            or
+            histogram_quantile(0.95, rate(cumulative_layout_shift_bucket{app="web-app"}[5m])) > 0.1
+          )
+        total_query: |
+          rate(page_load_total{app="web-app"}[5m])
+    alerting:
+      name: FrontendPerformanceBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: warning
+        team: frontend
+      annotations:
+        summary: "Frontend performance budget exceeded"
+        description: "Frontend performance metrics are exceeding defined budgets"
+        runbook_url: "https://runbooks.nexus-v3.local/frontend-performance-budget"
+        dashboard_url: "http://localhost:3000/d/frontend-performance"
+      page_alert:
+        labels:
+          severity: critical
+        for: "2m"
+      ticket_alert:
+        labels:
+          severity: warning
+        for: "10m"
+
+  # API Response Time Budget
+  - name: "api-response-time-budget"
+    objective: 99.0
+    description: "API response time budget - 99% of requests under 200ms"
+    sli:
+      events:
+        error_query: |
+          histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job="api-gateway"}[5m])) > 0.2
+        total_query: |
+          rate(http_requests_total{job="api-gateway"}[5m])
+    alerting:
+      name: ApiResponseTimeBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: warning
+        team: backend
+      annotations:
+        summary: "API response time budget exceeded"
+        description: "99th percentile API response time exceeds 200ms budget"
+        runbook_url: "https://runbooks.nexus-v3.local/api-response-time-budget"
+
+  # Database Query Performance Budget
+  - name: "database-query-budget"
+    objective: 95.0
+    description: "Database query performance budget - 95% of queries under 100ms"
+    sli:
+      events:
+        error_query: |
+          histogram_quantile(0.95, rate(postgres_query_duration_seconds_bucket[5m])) > 0.1
+        total_query: |
+          rate(postgres_queries_total[5m])
+    alerting:
+      name: DatabaseQueryBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: warning
+        team: platform
+      annotations:
+        summary: "Database query performance budget exceeded"
+        description: "95th percentile database query time exceeds 100ms budget"
+        runbook_url: "https://runbooks.nexus-v3.local/database-query-budget"
+
+  # Memory Usage Budget
+  - name: "memory-usage-budget"
+    objective: 90.0
+    description: "Memory usage budget - 90% of time under 80% memory usage"
+    sli:
+      events:
+        error_query: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 80
+        total_query: |
+          1
+    alerting:
+      name: MemoryUsageBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: warning
+        team: infrastructure
+      annotations:
+        summary: "Memory usage budget exceeded"
+        description: "Memory usage exceeds 80% budget threshold"
+        runbook_url: "https://runbooks.nexus-v3.local/memory-usage-budget"
+
+  # CPU Usage Budget
+  - name: "cpu-usage-budget"
+    objective: 85.0
+    description: "CPU usage budget - 85% of time under 70% CPU usage"
+    sli:
+      events:
+        error_query: |
+          100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 70
+        total_query: |
+          1
+    alerting:
+      name: CpuUsageBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: warning
+        team: infrastructure
+      annotations:
+        summary: "CPU usage budget exceeded"
+        description: "CPU usage exceeds 70% budget threshold"
+        runbook_url: "https://runbooks.nexus-v3.local/cpu-usage-budget"
+
+  # Error Rate Budget
+  - name: "error-rate-budget"
+    objective: 99.9
+    description: "Error rate budget - 99.9% of requests successful"
+    sli:
+      events:
+        error_query: |
+          rate(http_requests_total{code=~"5.."}[5m])
+        total_query: |
+          rate(http_requests_total[5m])
+    alerting:
+      name: ErrorRateBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: critical
+        team: backend
+      annotations:
+        summary: "Error rate budget exceeded"
+        description: "Error rate exceeds 0.1% budget threshold"
+        runbook_url: "https://runbooks.nexus-v3.local/error-rate-budget"
+
+  # Throughput Budget
+  - name: "throughput-budget"
+    objective: 95.0
+    description: "Throughput budget - maintain 95% of expected throughput"
+    sli:
+      events:
+        error_query: |
+          rate(http_requests_total[5m]) < (rate(http_requests_total[5m] offset 1w) * 0.95)
+        total_query: |
+          1
+    alerting:
+      name: ThroughputBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: warning
+        team: backend
+      annotations:
+        summary: "Throughput budget not met"
+        description: "Current throughput is below 95% of expected baseline"
+        runbook_url: "https://runbooks.nexus-v3.local/throughput-budget"
+
+  # Disk I/O Budget
+  - name: "disk-io-budget"
+    objective: 90.0
+    description: "Disk I/O budget - 90% of time under I/O threshold"
+    sli:
+      events:
+        error_query: |
+          rate(node_disk_io_time_seconds_total[5m]) > 0.8
+        total_query: |
+          1
+    alerting:
+      name: DiskIoBudget
+      labels:
+        category: performance
+        type: performance_budget
+        severity: warning
+        team: infrastructure
+      annotations:
+        summary: "Disk I/O budget exceeded"
+        description: "Disk I/O utilization exceeds budget threshold"
+        runbook_url: "https://runbooks.nexus-v3.local/disk-io-budget"

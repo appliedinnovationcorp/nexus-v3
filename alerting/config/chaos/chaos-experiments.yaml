@@ -1,0 +1,336 @@
+# Chaos Engineering Experiments Configuration
+# Litmus Chaos experiments for resilience testing
+
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: nexus-v3-chaos-suite
+  namespace: litmus
+  labels:
+    subject: nexus-v3-chaos-testing
+spec:
+  entrypoint: chaos-experiments
+  serviceAccountName: argo-chaos
+  securityContext:
+    runAsUser: 1000
+    runAsNonRoot: true
+  templates:
+    - name: chaos-experiments
+      steps:
+        # Network chaos experiments
+        - - name: network-latency-experiment
+            template: network-latency
+        - - name: network-loss-experiment
+            template: network-loss
+        - - name: network-partition-experiment
+            template: network-partition
+        
+        # Pod chaos experiments
+        - - name: pod-delete-experiment
+            template: pod-delete
+        - - name: pod-memory-hog-experiment
+            template: pod-memory-hog
+        - - name: pod-cpu-hog-experiment
+            template: pod-cpu-hog
+        
+        # Node chaos experiments
+        - - name: node-drain-experiment
+            template: node-drain
+        - - name: node-cpu-hog-experiment
+            template: node-cpu-hog
+        - - name: node-memory-hog-experiment
+            template: node-memory-hog
+        
+        # Application-specific chaos
+        - - name: database-chaos-experiment
+            template: database-chaos
+        - - name: api-gateway-chaos-experiment
+            template: api-gateway-chaos
+
+    # Network latency injection
+    - name: network-latency
+      inputs:
+        artifacts:
+          - name: network-latency
+            path: /tmp/chaosengine-network-latency.yaml
+            raw:
+              data: |
+                apiVersion: litmuschaos.io/v1alpha1
+                kind: ChaosEngine
+                metadata:
+                  name: network-latency-chaos
+                  namespace: default
+                spec:
+                  appinfo:
+                    appns: default
+                    applabel: "app=api-gateway"
+                    appkind: deployment
+                  chaosServiceAccount: litmus-admin
+                  experiments:
+                    - name: pod-network-latency
+                      spec:
+                        components:
+                          env:
+                            - name: TARGET_CONTAINER
+                              value: "api-gateway"
+                            - name: NETWORK_INTERFACE
+                              value: "eth0"
+                            - name: NETWORK_LATENCY
+                              value: "2000"  # 2 second latency
+                            - name: TOTAL_CHAOS_DURATION
+                              value: "300"   # 5 minutes
+                            - name: PODS_AFFECTED_PERC
+                              value: "50"    # 50% of pods
+                        probe:
+                          - name: "api-gateway-health-check"
+                            type: "httpProbe"
+                            mode: "Continuous"
+                            runProperties:
+                              probeTimeout: 10
+                              retry: 3
+                              interval: 5
+                            httpProbe/inputs:
+                              url: "http://api-gateway:8080/health"
+                              insecureSkipTLS: true
+                              method:
+                                get:
+                                  criteria: "=="
+                                  responseCode: "200"
+      container:
+        image: litmuschaos/litmus-checker:2.14.0
+        command: [sh, -c]
+        args: ["kubectl apply -f /tmp/chaosengine-network-latency.yaml && sleep 360 && kubectl delete -f /tmp/chaosengine-network-latency.yaml"]
+
+    # Pod deletion chaos
+    - name: pod-delete
+      inputs:
+        artifacts:
+          - name: pod-delete
+            path: /tmp/chaosengine-pod-delete.yaml
+            raw:
+              data: |
+                apiVersion: litmuschaos.io/v1alpha1
+                kind: ChaosEngine
+                metadata:
+                  name: pod-delete-chaos
+                  namespace: default
+                spec:
+                  appinfo:
+                    appns: default
+                    applabel: "app=web-app"
+                    appkind: deployment
+                  chaosServiceAccount: litmus-admin
+                  experiments:
+                    - name: pod-delete
+                      spec:
+                        components:
+                          env:
+                            - name: TOTAL_CHAOS_DURATION
+                              value: "300"
+                            - name: CHAOS_INTERVAL
+                              value: "30"
+                            - name: FORCE
+                              value: "false"
+                            - name: PODS_AFFECTED_PERC
+                              value: "25"
+                        probe:
+                          - name: "web-app-availability-check"
+                            type: "httpProbe"
+                            mode: "Continuous"
+                            runProperties:
+                              probeTimeout: 10
+                              retry: 3
+                              interval: 10
+                            httpProbe/inputs:
+                              url: "http://web-app:3000/health"
+                              insecureSkipTLS: true
+                              method:
+                                get:
+                                  criteria: "=="
+                                  responseCode: "200"
+      container:
+        image: litmuschaos/litmus-checker:2.14.0
+        command: [sh, -c]
+        args: ["kubectl apply -f /tmp/chaosengine-pod-delete.yaml && sleep 360 && kubectl delete -f /tmp/chaosengine-pod-delete.yaml"]
+
+    # Database chaos experiment
+    - name: database-chaos
+      inputs:
+        artifacts:
+          - name: database-chaos
+            path: /tmp/chaosengine-database.yaml
+            raw:
+              data: |
+                apiVersion: litmuschaos.io/v1alpha1
+                kind: ChaosEngine
+                metadata:
+                  name: database-chaos
+                  namespace: default
+                spec:
+                  appinfo:
+                    appns: default
+                    applabel: "app=postgres"
+                    appkind: deployment
+                  chaosServiceAccount: litmus-admin
+                  experiments:
+                    - name: pod-memory-hog
+                      spec:
+                        components:
+                          env:
+                            - name: MEMORY_CONSUMPTION
+                              value: "500"  # 500MB
+                            - name: TOTAL_CHAOS_DURATION
+                              value: "180"  # 3 minutes
+                            - name: TARGET_PODS
+                              value: "postgres"
+                        probe:
+                          - name: "database-connection-check"
+                            type: "cmdProbe"
+                            mode: "Continuous"
+                            runProperties:
+                              probeTimeout: 10
+                              retry: 3
+                              interval: 15
+                            cmdProbe/inputs:
+                              command: "pg_isready -h postgres -p 5432"
+                              source:
+                                image: "postgres:15-alpine"
+                              comparator:
+                                type: "string"
+                                criteria: "contains"
+                                value: "accepting connections"
+      container:
+        image: litmuschaos/litmus-checker:2.14.0
+        command: [sh, -c]
+        args: ["kubectl apply -f /tmp/chaosengine-database.yaml && sleep 240 && kubectl delete -f /tmp/chaosengine-database.yaml"]
+
+---
+# Chaos Experiment Schedule
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: scheduled-chaos-experiments
+  namespace: litmus
+spec:
+  schedule: "0 2 * * 1"  # Every Monday at 2 AM
+  timezone: "UTC"
+  workflowSpec:
+    entrypoint: weekly-chaos-suite
+    templates:
+      - name: weekly-chaos-suite
+        steps:
+          - - name: light-chaos-experiments
+              template: light-chaos
+          - - name: medium-chaos-experiments
+              template: medium-chaos
+              when: "{{steps.light-chaos-experiments.outputs.result}} == 'success'"
+          - - name: heavy-chaos-experiments
+              template: heavy-chaos
+              when: "{{steps.medium-chaos-experiments.outputs.result}} == 'success'"
+
+      - name: light-chaos
+        script:
+          image: litmuschaos/litmus-checker:2.14.0
+          command: [sh]
+          source: |
+            echo "Running light chaos experiments..."
+            # Network latency experiments
+            kubectl apply -f /chaos-configs/light-network-latency.yaml
+            sleep 300
+            kubectl delete -f /chaos-configs/light-network-latency.yaml
+            echo "success"
+
+      - name: medium-chaos
+        script:
+          image: litmuschaos/litmus-checker:2.14.0
+          command: [sh]
+          source: |
+            echo "Running medium chaos experiments..."
+            # Pod deletion experiments
+            kubectl apply -f /chaos-configs/medium-pod-delete.yaml
+            sleep 600
+            kubectl delete -f /chaos-configs/medium-pod-delete.yaml
+            echo "success"
+
+      - name: heavy-chaos
+        script:
+          image: litmuschaos/litmus-checker:2.14.0
+          command: [sh]
+          source: |
+            echo "Running heavy chaos experiments..."
+            # Node-level chaos experiments
+            kubectl apply -f /chaos-configs/heavy-node-chaos.yaml
+            sleep 900
+            kubectl delete -f /chaos-configs/heavy-node-chaos.yaml
+            echo "success"
+
+---
+# Chaos Experiment Monitoring
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-monitoring-config
+  namespace: litmus
+data:
+  prometheus-rules.yaml: |
+    groups:
+      - name: chaos-engineering.rules
+        rules:
+          # Chaos experiment execution tracking
+          - alert: ChaosExperimentFailed
+            expr: litmus_experiment_verdict{verdict="Fail"} == 1
+            for: 0m
+            labels:
+              severity: critical
+              category: chaos_engineering
+              source: chaos_engineering
+            annotations:
+              summary: "Chaos experiment {{ $labels.experiment_name }} failed"
+              description: "Chaos experiment {{ $labels.experiment_name }} in namespace {{ $labels.namespace }} has failed"
+              runbook_url: "https://runbooks.nexus-v3.local/chaos-experiment-failure"
+
+          # System resilience during chaos
+          - alert: SystemNotResilientToChaos
+            expr: |
+              (
+                rate(http_requests_total{code=~"5.."}[5m]) > 0.05
+                and on() litmus_experiment_verdict{verdict="Pass"} == 1
+              )
+            for: 2m
+            labels:
+              severity: critical
+              category: chaos_engineering
+              source: chaos_engineering
+            annotations:
+              summary: "System showing poor resilience during chaos experiment"
+              description: "Error rate increased significantly during chaos experiment execution"
+              runbook_url: "https://runbooks.nexus-v3.local/chaos-resilience-failure"
+
+          # Chaos experiment duration tracking
+          - alert: ChaosExperimentTooLong
+            expr: litmus_experiment_duration_seconds > 1800  # 30 minutes
+            for: 0m
+            labels:
+              severity: warning
+              category: chaos_engineering
+              source: chaos_engineering
+            annotations:
+              summary: "Chaos experiment running too long"
+              description: "Chaos experiment {{ $labels.experiment_name }} has been running for over 30 minutes"
+
+          # Recovery time after chaos
+          - alert: SlowRecoveryAfterChaos
+            expr: |
+              (
+                time() - litmus_experiment_end_time > 300
+                and rate(http_requests_total{code=~"5.."}[5m]) > 0.01
+              )
+            for: 5m
+            labels:
+              severity: warning
+              category: chaos_engineering
+              source: chaos_engineering
+            annotations:
+              summary: "Slow recovery after chaos experiment"
+              description: "System is taking longer than expected to recover after chaos experiment"
+              runbook_url: "https://runbooks.nexus-v3.local/slow-chaos-recovery"

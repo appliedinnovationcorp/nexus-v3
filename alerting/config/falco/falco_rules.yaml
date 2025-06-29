@@ -1,0 +1,220 @@
+# Falco Security Rules for Runtime Threat Detection
+# Custom rules for Nexus V3 platform security monitoring
+
+- rule: Unauthorized Process in Container
+  desc: Detect unauthorized processes running in containers
+  condition: >
+    spawned_process and container and
+    not proc.name in (node, npm, python, java, postgres, nginx, redis-server) and
+    not proc.name startswith "sh" and
+    not proc.name startswith "bash"
+  output: >
+    Unauthorized process spawned in container
+    (user=%user.name user_loginuid=%user.loginuid command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [container, process, security]
+
+- rule: Sensitive File Access in Container
+  desc: Detect access to sensitive files in containers
+  condition: >
+    open_read and container and
+    (fd.name startswith /etc/passwd or
+     fd.name startswith /etc/shadow or
+     fd.name startswith /etc/ssh/ or
+     fd.name startswith /root/.ssh/ or
+     fd.name contains "id_rsa" or
+     fd.name contains "id_dsa" or
+     fd.name contains ".pem" or
+     fd.name contains "secret" or
+     fd.name contains "token")
+  output: >
+    Sensitive file accessed in container
+    (user=%user.name command=%proc.cmdline file=%fd.name
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: HIGH
+  tags: [container, filesystem, security, secrets]
+
+- rule: Container Privilege Escalation
+  desc: Detect privilege escalation attempts in containers
+  condition: >
+    spawned_process and container and
+    ((proc.name=sudo) or
+     (proc.name=su) or
+     (proc.name=setuid) or
+     (proc.cmdline contains "chmod +s") or
+     (proc.cmdline contains "chmod 4755"))
+  output: >
+    Privilege escalation attempt in container
+    (user=%user.name command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [container, privilege_escalation, security]
+
+- rule: Suspicious Network Activity
+  desc: Detect suspicious network connections from containers
+  condition: >
+    (inbound_outbound) and container and
+    ((fd.sport in (22, 23, 135, 139, 445, 1433, 3389)) or
+     (fd.dport in (22, 23, 135, 139, 445, 1433, 3389)) or
+     (fd.sip startswith "10.0.0." and fd.dport=22) or
+     (fd.sip startswith "192.168." and fd.dport=22))
+  output: >
+    Suspicious network connection from container
+    (user=%user.name command=%proc.cmdline connection=%fd.name
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: HIGH
+  tags: [container, network, security]
+
+- rule: Database Credential Access
+  desc: Detect attempts to access database credentials
+  condition: >
+    open_read and container and
+    (fd.name contains "database" or
+     fd.name contains "db_password" or
+     fd.name contains "connection_string" or
+     fd.name contains ".env" or
+     fd.name contains "config.json" or
+     fd.name contains "secrets.yaml") and
+    proc.name in (cat, grep, less, more, tail, head, vim, nano, emacs)
+  output: >
+    Database credential access attempt
+    (user=%user.name command=%proc.cmdline file=%fd.name
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: HIGH
+  tags: [container, database, credentials, security]
+
+- rule: Crypto Mining Activity
+  desc: Detect potential cryptocurrency mining activity
+  condition: >
+    spawned_process and container and
+    (proc.name in (xmrig, cpuminer, cgminer, bfgminer, sgminer) or
+     proc.cmdline contains "stratum+tcp" or
+     proc.cmdline contains "mining" or
+     proc.cmdline contains "cryptonight" or
+     proc.cmdline contains "monero" or
+     proc.cmdline contains "bitcoin")
+  output: >
+    Potential crypto mining activity detected
+    (user=%user.name command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [container, crypto_mining, security]
+
+- rule: Container Escape Attempt
+  desc: Detect container escape attempts
+  condition: >
+    spawned_process and container and
+    (proc.cmdline contains "docker.sock" or
+     proc.cmdline contains "/var/run/docker.sock" or
+     proc.cmdline contains "runc" or
+     proc.cmdline contains "cgroups" or
+     proc.cmdline contains "/proc/1/root" or
+     proc.cmdline contains "nsenter")
+  output: >
+    Container escape attempt detected
+    (user=%user.name command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [container, escape, security]
+
+- rule: Suspicious API Access
+  desc: Detect suspicious API access patterns
+  condition: >
+    spawned_process and container and
+    (proc.cmdline contains "curl" or proc.cmdline contains "wget") and
+    (proc.cmdline contains "/api/admin" or
+     proc.cmdline contains "/api/users" or
+     proc.cmdline contains "/api/secrets" or
+     proc.cmdline contains "Authorization: Bearer" or
+     proc.cmdline contains "X-API-Key")
+  output: >
+    Suspicious API access detected
+    (user=%user.name command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: HIGH
+  tags: [container, api, security]
+
+- rule: Anomalous System Call Pattern
+  desc: Detect anomalous system call patterns that might indicate malicious activity
+  condition: >
+    spawned_process and container and
+    proc.name in (nc, netcat, socat, ncat) and
+    (proc.cmdline contains "-e" or
+     proc.cmdline contains "-c" or
+     proc.cmdline contains "bash" or
+     proc.cmdline contains "sh")
+  output: >
+    Anomalous system call pattern detected - potential reverse shell
+    (user=%user.name command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [container, reverse_shell, security]
+
+- rule: Unauthorized File Modification
+  desc: Detect unauthorized modifications to critical system files
+  condition: >
+    modify and container and
+    (fd.name startswith /etc/ or
+     fd.name startswith /usr/bin/ or
+     fd.name startswith /usr/sbin/ or
+     fd.name startswith /bin/ or
+     fd.name startswith /sbin/) and
+    not proc.name in (apt, yum, dnf, apk, dpkg, rpm, package-manager)
+  output: >
+    Unauthorized system file modification
+    (user=%user.name command=%proc.cmdline file=%fd.name
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: HIGH
+  tags: [container, filesystem, security]
+
+# Macro definitions for reusable conditions
+- macro: nexus_v3_containers
+  condition: >
+    container.image.repository in (nexus-v3/api-gateway, nexus-v3/web-app, nexus-v3/user-service, nexus-v3/auth-service)
+
+- macro: database_containers
+  condition: >
+    container.image.repository in (postgres, mysql, mongodb, redis)
+
+- macro: monitoring_containers
+  condition: >
+    container.image.repository in (prometheus, grafana, elasticsearch, kibana, jaeger)
+
+# Application-specific rules
+- rule: Nexus V3 Application Anomaly
+  desc: Detect anomalous behavior in Nexus V3 applications
+  condition: >
+    spawned_process and nexus_v3_containers and
+    not proc.name in (node, npm, python, java) and
+    not proc.name startswith "nexus-v3"
+  output: >
+    Anomalous process in Nexus V3 application container
+    (user=%user.name command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [nexus-v3, application, security]
+
+- rule: Database Container Anomaly
+  desc: Detect anomalous behavior in database containers
+  condition: >
+    spawned_process and database_containers and
+    not proc.name in (postgres, mysqld, mongod, redis-server, psql, mysql, mongo, redis-cli) and
+    not proc.name startswith "pg_" and
+    not proc.name startswith "mysql"
+  output: >
+    Anomalous process in database container
+    (user=%user.name command=%proc.cmdline
+    container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority: HIGH
+  tags: [database, security]
+
+# Lists for common legitimate processes
+- list: allowed_monitoring_processes
+  items: [prometheus, grafana-server, elasticsearch, kibana, jaeger-agent, jaeger-collector]
+
+- list: allowed_web_processes
+  items: [nginx, apache2, httpd, node, npm, yarn, gunicorn, uwsgi]
+
+- list: allowed_database_processes
+  items: [postgres, mysqld, mongod, redis-server, psql, mysql, mongo, redis-cli]

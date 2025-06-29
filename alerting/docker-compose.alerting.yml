@@ -1,0 +1,321 @@
+version: '3.8'
+
+services:
+  # Alertmanager for alert routing and management
+  alertmanager-advanced:
+    image: prom/alertmanager:v0.26.0
+    container_name: alertmanager-advanced
+    volumes:
+      - ./config/alertmanager:/etc/alertmanager
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.listen-address=0.0.0.0:9094'
+      - '--log.level=info'
+    ports:
+      - "9093:9093"
+      - "9094:9094"
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Karma for alert dashboard
+  karma:
+    image: lmierzwa/karma:v0.118
+    container_name: karma-dashboard
+    environment:
+      - ALERTMANAGER_URI=http://alertmanager-advanced:9093
+      - PORT=8080
+    ports:
+      - "8080:8080"
+    networks:
+      - alerting-network
+    depends_on:
+      - alertmanager-advanced
+    restart: unless-stopped
+
+  # Grafana OnCall for incident management
+  grafana-oncall-engine:
+    image: grafana/oncall:v1.3.0
+    container_name: grafana-oncall-engine
+    environment:
+      - DATABASE_TYPE=postgresql
+      - DATABASE_NAME=oncall
+      - DATABASE_USER=oncall
+      - DATABASE_PASSWORD=oncall_password
+      - DATABASE_HOST=postgres-oncall
+      - DATABASE_PORT=5432
+      - REDIS_URI=redis://redis-oncall:6379/0
+      - SECRET_KEY=your-secret-key-here
+      - FEATURE_PROMETHEUS_EXPORTER_ENABLED=True
+      - PROMETHEUS_EXPORTER_SECRET=prometheus_secret
+      - BASE_URL=http://localhost:8081
+    ports:
+      - "8081:8080"
+    networks:
+      - alerting-network
+    depends_on:
+      - postgres-oncall
+      - redis-oncall
+    restart: unless-stopped
+
+  # PostgreSQL for OnCall
+  postgres-oncall:
+    image: postgres:15-alpine
+    container_name: postgres-oncall
+    environment:
+      - POSTGRES_DB=oncall
+      - POSTGRES_USER=oncall
+      - POSTGRES_PASSWORD=oncall_password
+    volumes:
+      - postgres-oncall-data:/var/lib/postgresql/data
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Redis for OnCall
+  redis-oncall:
+    image: redis:7-alpine
+    container_name: redis-oncall
+    volumes:
+      - redis-oncall-data:/data
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Pyrra for SLO monitoring
+  pyrra:
+    image: pyrra/pyrra:v0.7.4
+    container_name: pyrra-slo
+    command:
+      - "filesystem"
+      - "--config-files=/etc/pyrra/*.yaml"
+      - "--prometheus-url=http://prometheus:9090"
+    volumes:
+      - ./config/pyrra:/etc/pyrra
+    ports:
+      - "9099:9444"
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Sloth for SLI/SLO generation
+  sloth:
+    image: slok/sloth:v0.11.0
+    container_name: sloth-slo
+    volumes:
+      - ./config/sloth:/etc/sloth
+      - ./generated:/generated
+    command:
+      - "generate"
+      - "-i"
+      - "/etc/sloth"
+      - "-o"
+      - "/generated/slo-rules.yaml"
+    networks:
+      - alerting-network
+
+  # Chaos Monkey for chaos engineering
+  chaos-monkey:
+    image: quay.io/linki/chaoskube:v0.21.0
+    container_name: chaos-monkey
+    command:
+      - --interval=10m
+      - --dry-run=false
+      - --metrics-addr=0.0.0.0:8080
+      - --log-level=info
+      - --annotation-selector=chaos.alpha.kubernetes.io/enabled=true
+    ports:
+      - "8082:8080"
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Litmus Chaos for advanced chaos engineering
+  litmus-server:
+    image: litmuschaos/litmusportal-server:3.0.0
+    container_name: litmus-server
+    environment:
+      - DB_SERVER=mongo-litmus:27017
+      - JWT_SECRET=litmus-portal@123
+      - EXTERNAL_AGENT=false
+      - SUBSCRIBER_IMAGE=litmuschaos/litmusportal-subscriber:3.0.0
+      - EVENT_TRACKER_IMAGE=litmuschaos/litmusportal-event-tracker:3.0.0
+      - ARGO_WORKFLOW_CONTROLLER_IMAGE=argoproj/workflow-controller:v3.4.4
+      - ARGO_WORKFLOW_EXECUTOR_IMAGE=argoproj/argoexec:v3.4.4
+      - LITMUS_CHAOS_OPERATOR_IMAGE=litmuschaos/chaos-operator:3.0.0
+      - LITMUS_CHAOS_RUNNER_IMAGE=litmuschaos/chaos-runner:3.0.0
+      - LITMUS_CHAOS_EXPORTER_IMAGE=litmuschaos/chaos-exporter:3.0.0
+    ports:
+      - "9002:8080"
+      - "9003:8000"
+    networks:
+      - alerting-network
+    depends_on:
+      - mongo-litmus
+    restart: unless-stopped
+
+  # MongoDB for Litmus
+  mongo-litmus:
+    image: mongo:6.0
+    container_name: mongo-litmus
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=rootpassword
+      - MONGO_INITDB_DATABASE=litmus
+    volumes:
+      - mongo-litmus-data:/data/db
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Botkube for incident response automation
+  botkube:
+    image: kubeshop/botkube:v1.5.0
+    container_name: botkube-incident
+    environment:
+      - CONFIG_PATH=/config
+    volumes:
+      - ./config/botkube:/config
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Falco for runtime security monitoring
+  falco:
+    image: falcosecurity/falco-no-driver:0.36.2
+    container_name: falco-security
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - /dev:/host/dev
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - /etc:/host/etc:ro
+      - ./config/falco:/etc/falco
+    ports:
+      - "8765:8765"
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Thanos for long-term metrics storage
+  thanos-sidecar:
+    image: thanosio/thanos:v0.32.5
+    container_name: thanos-sidecar
+    command:
+      - 'sidecar'
+      - '--tsdb.path=/prometheus'
+      - '--prometheus.url=http://prometheus:9090'
+      - '--grpc-address=0.0.0.0:10901'
+      - '--http-address=0.0.0.0:10902'
+      - '--objstore.config-file=/etc/thanos/bucket_config.yaml'
+    volumes:
+      - ./config/thanos:/etc/thanos
+      - prometheus-data:/prometheus
+    ports:
+      - "10902:10902"
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Thanos Query for federated queries
+  thanos-query:
+    image: thanosio/thanos:v0.32.5
+    container_name: thanos-query
+    command:
+      - 'query'
+      - '--http-address=0.0.0.0:9090'
+      - '--grpc-address=0.0.0.0:10903'
+      - '--store=thanos-sidecar:10901'
+      - '--store=thanos-store:10901'
+    ports:
+      - "10904:9090"
+    networks:
+      - alerting-network
+    depends_on:
+      - thanos-sidecar
+    restart: unless-stopped
+
+  # VictoriaMetrics for high-performance metrics
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.95.1
+    container_name: victoriametrics
+    command:
+      - '--storageDataPath=/storage'
+      - '--httpListenAddr=:8428'
+      - '--retentionPeriod=12'
+      - '--search.maxQueryDuration=60s'
+      - '--search.maxConcurrentRequests=8'
+    volumes:
+      - victoriametrics-data:/storage
+    ports:
+      - "8428:8428"
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Robusta for Kubernetes incident response
+  robusta-runner:
+    image: robustadev/robusta-runner:0.10.25
+    container_name: robusta-runner
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config/robusta:/etc/robusta
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # Jaeger for distributed tracing (extended)
+  jaeger-collector:
+    image: jaegertracing/jaeger-collector:1.50
+    container_name: jaeger-collector-advanced
+    environment:
+      - SPAN_STORAGE_TYPE=elasticsearch
+      - ES_SERVER_URLS=http://elasticsearch-monitoring:9200
+      - ES_NUM_SHARDS=1
+      - ES_NUM_REPLICAS=0
+    ports:
+      - "14269:14269"
+      - "14268:14268"
+      - "9411:9411"
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+  # OpenTelemetry Collector (Advanced)
+  otel-collector-advanced:
+    image: otel/opentelemetry-collector-contrib:0.88.0
+    container_name: otel-collector-advanced
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel-advanced:/etc
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8889:8889"   # Prometheus metrics
+      - "13133:13133" # Health check
+    networks:
+      - alerting-network
+    restart: unless-stopped
+
+volumes:
+  alertmanager-data:
+  postgres-oncall-data:
+  redis-oncall-data:
+  mongo-litmus-data:
+  victoriametrics-data:
+  prometheus-data:
+
+networks:
+  alerting-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
