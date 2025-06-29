@@ -1,0 +1,181 @@
+# Vector configuration for log collection and processing
+
+[api]
+enabled = true
+address = "0.0.0.0:8686"
+
+# Data directory
+data_dir = "/var/lib/vector"
+
+# Sources - Log collection
+[sources.docker_logs]
+type = "docker_logs"
+include_containers = []
+exclude_containers = ["vector-monitoring"]
+
+[sources.file_logs]
+type = "file"
+include = ["/var/log/**/*.log"]
+exclude = ["/var/log/vector.log"]
+read_from = "beginning"
+
+[sources.syslog]
+type = "syslog"
+address = "0.0.0.0:514"
+mode = "tcp"
+
+[sources.http_logs]
+type = "http"
+address = "0.0.0.0:8080"
+encoding = "json"
+
+# Transforms - Log processing
+[transforms.parse_json]
+type = "remap"
+inputs = ["docker_logs", "http_logs"]
+source = '''
+  if is_string(.message) {
+    parsed = parse_json(.message) ?? {}
+    . = merge(., parsed)
+  }
+'''
+
+[transforms.add_metadata]
+type = "remap"
+inputs = ["parse_json", "file_logs", "syslog"]
+source = '''
+  .monitoring_cluster = "nexus-v3"
+  .environment = "development"
+  .collected_at = now()
+  
+  # Extract service name from container name or file path
+  if exists(.container_name) {
+    .service = split(.container_name, "-")[0]
+  } else if exists(.file) {
+    .service = split(.file, "/")[-2] ?? "unknown"
+  }
+  
+  # Normalize log level
+  if exists(.level) {
+    .level = upcase(string!(.level))
+  } else if exists(.severity) {
+    .level = upcase(string!(.severity))
+  } else {
+    .level = "INFO"
+  }
+  
+  # Add alert flag for errors
+  if .level == "ERROR" || .level == "FATAL" || .level == "CRITICAL" {
+    .alert_required = true
+  }
+'''
+
+[transforms.filter_sensitive]
+type = "remap"
+inputs = ["add_metadata"]
+source = '''
+  # Remove sensitive fields
+  del(.password)
+  del(.token)
+  del(.secret)
+  del(.key)
+  del(.authorization)
+  
+  # Redact sensitive patterns in message
+  if exists(.message) {
+    .message = replace(string!(.message), r'password["\s]*[:=]["\s]*[^"\s,}]+', "password=***")
+    .message = replace(string!(.message), r'token["\s]*[:=]["\s]*[^"\s,}]+', "token=***")
+  }
+'''
+
+[transforms.route_logs]
+type = "route"
+inputs = ["filter_sensitive"]
+
+[transforms.route_logs.route.error_logs]
+type = "vrl"
+source = '.level == "ERROR" || .level == "FATAL" || .level == "CRITICAL"'
+
+[transforms.route_logs.route.app_logs]
+type = "vrl"
+source = 'exists(.service) && .service != "unknown"'
+
+[transforms.route_logs.route.system_logs]
+type = "vrl"
+source = 'exists(.file) && starts_with(string!(.file), "/var/log/syslog")'
+
+# Sinks - Log destinations
+[sinks.elasticsearch_all]
+type = "elasticsearch"
+inputs = ["filter_sensitive"]
+endpoints = ["http://elasticsearch-monitoring:9200"]
+index = "vector-logs-%Y.%m.%d"
+doc_type = "_doc"
+
+[sinks.elasticsearch_errors]
+type = "elasticsearch"
+inputs = ["route_logs.error_logs"]
+endpoints = ["http://elasticsearch-monitoring:9200"]
+index = "error-logs-%Y.%m.%d"
+doc_type = "_doc"
+
+[sinks.elasticsearch_apps]
+type = "elasticsearch"
+inputs = ["route_logs.app_logs"]
+endpoints = ["http://elasticsearch-monitoring:9200"]
+index = "app-logs-%Y.%m.%d"
+doc_type = "_doc"
+
+[sinks.prometheus_metrics]
+type = "prometheus_exporter"
+inputs = ["add_metadata"]
+address = "0.0.0.0:9598"
+
+# Generate metrics from logs
+[[sinks.prometheus_metrics.metrics]]
+type = "counter"
+field = "level"
+name = "log_events_total"
+description = "Total number of log events by level"
+tags = { level = "{{ level }}", service = "{{ service }}" }
+
+[[sinks.prometheus_metrics.metrics]]
+type = "counter"
+field = "alert_required"
+name = "log_alerts_total"
+description = "Total number of log alerts generated"
+tags = { service = "{{ service }}", level = "{{ level }}" }
+
+# Alert sink for critical logs
+[sinks.alert_webhook]
+type = "http"
+inputs = ["route_logs.error_logs"]
+uri = "http://alertmanager:9093/api/v1/alerts"
+method = "post"
+encoding.codec = "json"
+
+[sinks.alert_webhook.encoding]
+except_fields = ["timestamp", "file", "source_type"]
+
+# Console output for debugging
+[sinks.console]
+type = "console"
+inputs = ["add_metadata"]
+encoding.codec = "json"
+target = "stdout"
+
+# File sink for backup
+[sinks.file_backup]
+type = "file"
+inputs = ["filter_sensitive"]
+path = "/var/log/vector/processed-%Y-%m-%d.log"
+encoding.codec = "json"
+
+# Health check
+[sources.internal_metrics]
+type = "internal_metrics"
+
+[sinks.internal_prometheus]
+type = "prometheus_exporter"
+inputs = ["internal_metrics"]
+address = "0.0.0.0:8686"

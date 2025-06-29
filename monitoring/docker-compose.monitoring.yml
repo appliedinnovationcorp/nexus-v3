@@ -1,0 +1,276 @@
+version: '3.8'
+
+services:
+  # Elasticsearch for log storage and APM data
+  elasticsearch-monitoring:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch-monitoring
+    environment:
+      - node.name=elasticsearch-monitoring
+      - cluster.name=monitoring-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch-monitoring-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - monitoring-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kibana for visualization and APM UI
+  kibana-monitoring:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana-monitoring
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch-monitoring:9200
+      - SERVER_NAME=kibana-monitoring
+      - SERVER_HOST=0.0.0.0
+    ports:
+      - "5601:5601"
+    networks:
+      - monitoring-network
+    depends_on:
+      elasticsearch-monitoring:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # APM Server for application performance monitoring
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:8.11.0
+    container_name: apm-server
+    environment:
+      - output.elasticsearch.hosts=["elasticsearch-monitoring:9200"]
+      - apm-server.host=0.0.0.0:8200
+      - apm-server.rum.enabled=true
+      - apm-server.rum.allow_origins=["*"]
+      - setup.kibana.host=kibana-monitoring:5601
+      - setup.template.enabled=true
+      - logging.level=info
+    ports:
+      - "8200:8200"
+    networks:
+      - monitoring-network
+    depends_on:
+      elasticsearch-monitoring:
+        condition: service_healthy
+    command: >
+      apm-server -e
+        -E output.elasticsearch.hosts=["elasticsearch-monitoring:9200"]
+        -E apm-server.rum.enabled=true
+        -E apm-server.rum.allow_origins=["*"]
+
+  # Logstash for log processing
+  logstash-monitoring:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: logstash-monitoring
+    volumes:
+      - ./config/logstash:/usr/share/logstash/pipeline
+      - ./config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    networks:
+      - monitoring-network
+    depends_on:
+      elasticsearch-monitoring:
+        condition: service_healthy
+    environment:
+      - "LS_JAVA_OPTS=-Xmx1g -Xms1g"
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus-monitoring
+    volumes:
+      - ./config/prometheus:/etc/prometheus
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  # Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana-monitoring
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    networks:
+      - monitoring-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    container_name: node-exporter
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - '/:/host:ro,rslave'
+    ports:
+      - "9100:9100"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  # cAdvisor for container metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /cgroup:/cgroup:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.50
+    container_name: jaeger-monitoring
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger collector HTTP
+      - "14250:14250"  # Jaeger collector gRPC
+      - "9411:9411"    # Zipkin compatible endpoint
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.88.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel:/etc
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics
+      - "8889:8889"   # Prometheus exporter metrics
+    networks:
+      - monitoring-network
+    depends_on:
+      - jaeger
+      - prometheus
+    restart: unless-stopped
+
+  # Uptime Kuma for synthetic monitoring
+  uptime-kuma:
+    image: louislam/uptime-kuma:1.23.8
+    container_name: uptime-kuma
+    volumes:
+      - uptime-kuma-data:/app/data
+    ports:
+      - "3001:3001"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  # Blackbox Exporter for endpoint monitoring
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.24.0
+    container_name: blackbox-exporter
+    volumes:
+      - ./config/blackbox:/etc/blackbox_exporter
+    ports:
+      - "9115:9115"
+    networks:
+      - monitoring-network
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
+    restart: unless-stopped
+
+  # AlertManager for alerting
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: alertmanager
+    volumes:
+      - ./config/alertmanager:/etc/alertmanager
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  # Vector for log collection and processing
+  vector:
+    image: timberio/vector:0.34.0-alpine
+    container_name: vector-monitoring
+    volumes:
+      - ./config/vector:/etc/vector
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    ports:
+      - "8686:8686"
+    networks:
+      - monitoring-network
+    command: ["--config", "/etc/vector/vector.toml"]
+    restart: unless-stopped
+
+volumes:
+  elasticsearch-monitoring-data:
+  prometheus-data:
+  grafana-data:
+  uptime-kuma-data:
+  alertmanager-data:
+
+networks:
+  monitoring-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
