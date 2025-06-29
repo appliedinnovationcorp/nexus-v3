@@ -1,0 +1,345 @@
+version: '3.8'
+
+services:
+  # Elasticsearch for audit logging and compliance data
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    container_name: elasticsearch-compliance
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - compliance-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kibana for compliance dashboards
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.0
+    container_name: kibana-compliance
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - compliance-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Logstash for log processing and compliance event handling
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.10.0
+    container_name: logstash-compliance
+    volumes:
+      - ./config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+      - ./config/logstash/patterns:/usr/share/logstash/patterns
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    environment:
+      - "LS_JAVA_OPTS=-Xmx1g -Xms1g"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - compliance-network
+
+  # Apache Airflow for data retention and compliance workflows
+  airflow-postgres:
+    image: postgres:15-alpine
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow_secure_pass
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    networks:
+      - compliance-network
+
+  airflow-redis:
+    image: redis:7-alpine
+    container_name: airflow-redis
+    networks:
+      - compliance-network
+
+  airflow-webserver:
+    image: apache/airflow:2.7.0
+    container_name: airflow-webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow_secure_pass@airflow-postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow_secure_pass@airflow-postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://:@airflow-redis:6379/0
+      - AIRFLOW__CORE__FERNET_KEY=your-fernet-key-here
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./config/airflow/airflow.cfg:/opt/airflow/airflow.cfg
+    depends_on:
+      - airflow-postgres
+      - airflow-redis
+    networks:
+      - compliance-network
+    command: webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.7.0
+    container_name: airflow-scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow_secure_pass@airflow-postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow_secure_pass@airflow-postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://:@airflow-redis:6379/0
+      - AIRFLOW__CORE__FERNET_KEY=your-fernet-key-here
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./config/airflow/airflow.cfg:/opt/airflow/airflow.cfg
+    depends_on:
+      - airflow-postgres
+      - airflow-redis
+    networks:
+      - compliance-network
+    command: scheduler
+
+  airflow-worker:
+    image: apache/airflow:2.7.0
+    container_name: airflow-worker
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow_secure_pass@airflow-postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow_secure_pass@airflow-postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://:@airflow-redis:6379/0
+      - AIRFLOW__CORE__FERNET_KEY=your-fernet-key-here
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    depends_on:
+      - airflow-postgres
+      - airflow-redis
+    networks:
+      - compliance-network
+    command: celery worker
+
+  # Compliance Service
+  compliance-service:
+    build:
+      context: ./services/compliance-service
+      dockerfile: Dockerfile
+    container_name: compliance-service
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://compliance_admin:compliance_secure_pass@postgres-compliance:5432/compliance_db
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      KAFKA_BROKERS: kafka:29092
+      REDIS_URL: redis://redis-compliance:6379
+      AIRFLOW_API_URL: http://airflow-webserver:8080/api/v1
+      GDPR_ANONYMIZATION_ENABLED: true
+      SOC2_MONITORING_ENABLED: true
+      AUDIT_LOGGING_ENABLED: true
+      DATA_RETENTION_ENABLED: true
+    ports:
+      - "3020:3000"
+    volumes:
+      - ./services/compliance-service:/app
+      - /app/node_modules
+    depends_on:
+      - elasticsearch
+      - postgres-compliance
+    networks:
+      - compliance-network
+      - microservices-network
+
+  # PostgreSQL for compliance data
+  postgres-compliance:
+    image: postgres:15-alpine
+    container_name: postgres-compliance
+    environment:
+      POSTGRES_DB: compliance_db
+      POSTGRES_USER: compliance_admin
+      POSTGRES_PASSWORD: compliance_secure_pass
+    ports:
+      - "5438:5432"
+    volumes:
+      - postgres-compliance-data:/var/lib/postgresql/data
+      - ./scripts/init-compliance-db.sql:/docker-entrypoint-initdb.d/init-compliance-db.sql
+    networks:
+      - compliance-network
+
+  # Redis for compliance caching
+  redis-compliance:
+    image: redis:7-alpine
+    container_name: redis-compliance
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis-compliance-data:/data
+    networks:
+      - compliance-network
+
+  # Open Policy Agent for policy enforcement
+  opa:
+    image: openpolicyagent/opa:latest-envoy
+    container_name: opa-compliance
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./config/opa/policies:/policies
+    command: >
+      run --server
+      --addr 0.0.0.0:8181
+      --config-file /policies/config.yaml
+      /policies
+    networks:
+      - compliance-network
+
+  # Grafana for compliance dashboards
+  grafana-compliance:
+    image: grafana/grafana:10.1.0
+    container_name: grafana-compliance
+    ports:
+      - "3004:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+    volumes:
+      - grafana-compliance-data:/var/lib/grafana
+      - ./config/grafana-compliance/dashboards:/etc/grafana/provisioning/dashboards
+      - ./config/grafana-compliance/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - compliance-network
+
+  # Prometheus for compliance metrics
+  prometheus-compliance:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus-compliance
+    ports:
+      - "9093:9090"
+    volumes:
+      - ./config/prometheus-compliance/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-compliance-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - compliance-network
+
+  # Data Anonymization Service
+  anonymization-service:
+    build:
+      context: ./services/anonymization-service
+      dockerfile: Dockerfile
+    container_name: anonymization-service
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://compliance_admin:compliance_secure_pass@postgres-compliance:5432/compliance_db
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ANONYMIZATION_ALGORITHMS: k-anonymity,l-diversity,t-closeness
+      PSEUDONYMIZATION_ENABLED: true
+    ports:
+      - "3021:3000"
+    volumes:
+      - ./services/anonymization-service:/app
+      - /app/node_modules
+    depends_on:
+      - postgres-compliance
+      - elasticsearch
+    networks:
+      - compliance-network
+
+  # Consent Management Service
+  consent-service:
+    build:
+      context: ./services/consent-service
+      dockerfile: Dockerfile
+    container_name: consent-service
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://compliance_admin:compliance_secure_pass@postgres-compliance:5432/compliance_db
+      REDIS_URL: redis://redis-compliance:6379
+      GDPR_CONSENT_TRACKING: true
+      CONSENT_WITHDRAWAL_ENABLED: true
+    ports:
+      - "3022:3000"
+    volumes:
+      - ./services/consent-service:/app
+      - /app/node_modules
+    depends_on:
+      - postgres-compliance
+      - redis-compliance
+    networks:
+      - compliance-network
+
+  # Audit Service
+  audit-service:
+    build:
+      context: ./services/audit-service
+      dockerfile: Dockerfile
+    container_name: audit-service
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      KAFKA_BROKERS: kafka:29092
+      IMMUTABLE_LOGGING: true
+      TAMPER_DETECTION: true
+      COMPLIANCE_REPORTING: true
+    ports:
+      - "3023:3000"
+    volumes:
+      - ./services/audit-service:/app
+      - /app/node_modules
+    depends_on:
+      - elasticsearch
+    networks:
+      - compliance-network
+      - microservices-network
+
+volumes:
+  elasticsearch-data:
+  airflow-postgres-data:
+  postgres-compliance-data:
+  redis-compliance-data:
+  grafana-compliance-data:
+  prometheus-compliance-data:
+
+networks:
+  compliance-network:
+    driver: bridge
+  microservices-network:
+    external: true
