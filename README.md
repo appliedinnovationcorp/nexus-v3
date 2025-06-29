@@ -39,6 +39,7 @@ pnpm test
 - `infrastructure-scaling/` - **NEW** Enterprise infrastructure scaling with auto-scaling, load balancing, and multi-region deployment
 - `react-native-enhancement/` - **NEW** Enterprise React Native enhancement with CodePush, push notifications, and offline-first architecture
 - `advanced-tooling/` - **NEW** Enterprise advanced tooling with Storybook, visual testing, and automated workflows
+- `development-environment/` - **NEW** Enterprise development environment with dev containers, HMR, and advanced debugging
 
 ## 🛠 Tech Stack
 
@@ -137,6 +138,14 @@ pnpm test
 - **Code Generation**: GraphQL Code Generator with TypeScript integration
 - **API Documentation**: OpenAPI/Swagger with automated generation
 - **Dependency Management**: Automated updates with security scanning
+
+### Development Environment
+- **Dev Containers**: Consistent development environments with VS Code integration
+- **Hot Module Replacement**: Optimized HMR with WebSocket support and file watching
+- **Advanced Debugging**: Node.js debugger, Chrome DevTools, and source map support
+- **Performance Profiling**: CPU profiling, memory analysis, and performance monitoring
+- **Production-like Data**: Realistic development data with automated seeding
+- **Development Tools**: Comprehensive tooling ecosystem for modern development
 
 ## 🏛️ Compliance System
 
@@ -542,6 +551,47 @@ docker-compose -f advanced-tooling/docker-compose.advanced-tooling.yml up -d
 - **API Documentation**: Interactive OpenAPI/Swagger documentation with automated generation
 - **Dependency Management**: Automated dependency updates with security vulnerability scanning
 
+## 💻 Development Environment
+
+Enterprise development environment with dev containers, HMR, and advanced debugging:
+
+### 🔧 Development Environment Components
+- **Dev Containers** (`setup-development-environment.sh`) - Consistent development environments with VS Code integration
+- **Hot Module Replacement** - Optimized HMR with WebSocket support and file watching
+- **Advanced Debugging** - Node.js debugger, Chrome DevTools, and source map support
+- **Performance Profiling** - CPU profiling, memory analysis, and performance monitoring
+- **Production-like Data** - Realistic development data with automated seeding
+- **Development Tools** - Comprehensive tooling ecosystem for modern development
+
+### 🚦 Quick Development Environment Setup
+```bash
+# Initialize development environment system
+./development-environment/scripts/setup-development-environment.sh
+
+# Start development environment services
+docker-compose -f development-environment/docker-compose.development-environment.yml up -d
+
+# Access development environment
+# - VS Code (Browser): http://localhost:8080
+# - Development App: http://localhost:3080
+# - Debug Dashboard: http://localhost:3401
+# - Profiling Server: http://localhost:3402
+# - Dev Dashboard: http://localhost:3404
+# - Kibana (Logs): http://localhost:5601
+# - Jaeger (Tracing): http://localhost:16686
+# - Dev Grafana: http://localhost:3309
+```
+
+### 🎯 Development Environment Features
+- **Consistent Development Environments**: Docker-based dev containers with VS Code integration
+- **Hot Module Replacement**: Instant code changes without page refresh or state loss
+- **Advanced Debugging Tools**: Node.js Inspector, Chrome DevTools, and source map support
+- **Performance Profiling**: Real-time CPU profiling, memory analysis, and performance monitoring
+- **Production-like Development Data**: Automated database seeding with realistic datasets
+- **Comprehensive Development Tools**: Elasticsearch, Kibana, Jaeger, MailHog, MinIO integration
+- **SSL Development Support**: HTTPS development with self-signed certificates
+- **File Watching Optimization**: Efficient file change detection with container support
+
 ## 📚 Documentation
 
 - [Architecture](./docs/architecture.md)
@@ -557,6 +607,7 @@ docker-compose -f advanced-tooling/docker-compose.advanced-tooling.yml up -d
 - [Infrastructure Scaling](./INFRASTRUCTURE-SCALING-SYSTEM-REPORT.md) - **NEW** Enterprise infrastructure scaling with auto-scaling, load balancing, and multi-region deployment
 - [React Native Enhancement](./REACT-NATIVE-ENHANCEMENT-SYSTEM-REPORT.md) - **NEW** Enterprise React Native enhancement with CodePush, push notifications, and offline-first architecture
 - [Advanced Tooling](./ADVANCED-TOOLING-SYSTEM-REPORT.md) - **NEW** Enterprise advanced tooling with Storybook, visual testing, and automated workflows
+- [Development Environment](./DEVELOPMENT-ENVIRONMENT-SYSTEM-REPORT.md) - **NEW** Enterprise development environment with dev containers, HMR, and advanced debugging
 
 - [Container Orchestration](./CONTAINER-ORCHESTRATION-REPORT.md) - **NEW** Enterprise Kubernetes platform
 
