@@ -1,0 +1,372 @@
+version: '3.8'
+
+services:
+  # Pa11y Accessibility Testing Service
+  pa11y-service:
+    build:
+      context: ./docker/pa11y-service
+      dockerfile: Dockerfile
+    container_name: nexus-pa11y-service
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config/pa11y-config.json:/app/config/pa11y-config.json
+      - ./reports/pa11y:/app/reports
+      - pa11y-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/pa11y
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Axe-Core Accessibility Engine
+  axe-service:
+    build:
+      context: ./docker/axe-service
+      dockerfile: Dockerfile
+    container_name: nexus-axe-service
+    ports:
+      - "4001:4000"
+    volumes:
+      - ./config/axe-config.json:/app/config/axe-config.json
+      - ./reports/axe:/app/reports
+      - axe-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/axe
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # WAVE Accessibility Evaluation
+  wave-service:
+    build:
+      context: ./docker/wave-service
+      dockerfile: Dockerfile
+    container_name: nexus-wave-service
+    ports:
+      - "4002:4000"
+    volumes:
+      - ./config/wave-config.json:/app/config/wave-config.json
+      - ./reports/wave:/app/reports
+      - wave-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/wave
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Lighthouse Accessibility Auditor
+  lighthouse-accessibility:
+    build:
+      context: ./docker/lighthouse-accessibility
+      dockerfile: Dockerfile
+    container_name: nexus-lighthouse-accessibility
+    ports:
+      - "4003:4000"
+    volumes:
+      - ./config/lighthouse-config.json:/app/config/lighthouse-config.json
+      - ./reports/lighthouse:/app/reports
+      - lighthouse-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/lighthouse
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Color Contrast Analyzer
+  contrast-analyzer:
+    build:
+      context: ./docker/contrast-analyzer
+      dockerfile: Dockerfile
+    container_name: nexus-contrast-analyzer
+    ports:
+      - "4004:4000"
+    volumes:
+      - ./config/contrast-config.json:/app/config/contrast-config.json
+      - ./reports/contrast:/app/reports
+      - contrast-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/contrast
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Screen Reader Testing Service
+  screen-reader-service:
+    build:
+      context: ./docker/screen-reader-service
+      dockerfile: Dockerfile
+    container_name: nexus-screen-reader-service
+    ports:
+      - "4005:4000"
+    volumes:
+      - ./config/screen-reader-config.json:/app/config/screen-reader-config.json
+      - ./reports/screen-reader:/app/reports
+      - screen-reader-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/screen-reader
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Keyboard Navigation Tester
+  keyboard-nav-service:
+    build:
+      context: ./docker/keyboard-nav-service
+      dockerfile: Dockerfile
+    container_name: nexus-keyboard-nav-service
+    ports:
+      - "4006:4000"
+    volumes:
+      - ./config/keyboard-nav-config.json:/app/config/keyboard-nav-config.json
+      - ./reports/keyboard-nav:/app/reports
+      - keyboard-nav-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/keyboard-nav
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Accessibility Orchestrator
+  accessibility-orchestrator:
+    build:
+      context: ./docker/accessibility-orchestrator
+      dockerfile: Dockerfile
+    container_name: nexus-accessibility-orchestrator
+    ports:
+      - "4007:4000"
+    volumes:
+      - ./config/orchestrator-config.json:/app/config/orchestrator-config.json
+      - ./reports:/app/reports
+      - orchestrator-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/orchestrator
+      - PA11Y_SERVICE_URL=http://pa11y-service:4000
+      - AXE_SERVICE_URL=http://axe-service:4000
+      - WAVE_SERVICE_URL=http://wave-service:4000
+      - LIGHTHOUSE_SERVICE_URL=http://lighthouse-accessibility:4000
+      - CONTRAST_SERVICE_URL=http://contrast-analyzer:4000
+      - SCREEN_READER_SERVICE_URL=http://screen-reader-service:4000
+      - KEYBOARD_NAV_SERVICE_URL=http://keyboard-nav-service:4000
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+      - pa11y-service
+      - axe-service
+      - wave-service
+      - lighthouse-accessibility
+      - contrast-analyzer
+      - screen-reader-service
+      - keyboard-nav-service
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Accessibility Dashboard
+  accessibility-dashboard:
+    build:
+      context: ./docker/accessibility-dashboard
+      dockerfile: Dockerfile
+    container_name: nexus-accessibility-dashboard
+    ports:
+      - "4008:3000"
+    volumes:
+      - ./config/dashboard-config.json:/app/config/dashboard-config.json
+      - ./reports:/app/reports
+    environment:
+      - NODE_ENV=production
+      - ORCHESTRATOR_URL=http://accessibility-orchestrator:4000
+    depends_on:
+      - accessibility-orchestrator
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # WCAG Compliance Checker
+  wcag-compliance:
+    build:
+      context: ./docker/wcag-compliance
+      dockerfile: Dockerfile
+    container_name: nexus-wcag-compliance
+    ports:
+      - "4009:4000"
+    volumes:
+      - ./config/wcag-config.json:/app/config/wcag-config.json
+      - ./reports/wcag:/app/reports
+      - wcag-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis-accessibility:6379
+      - MONGODB_URL=mongodb://mongodb-accessibility:27017/wcag
+    depends_on:
+      - redis-accessibility
+      - mongodb-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Redis for Accessibility Caching
+  redis-accessibility:
+    image: redis:7-alpine
+    container_name: nexus-redis-accessibility
+    ports:
+      - "6381:6379"
+    volumes:
+      - ./config/redis-accessibility.conf:/usr/local/etc/redis/redis.conf
+      - redis-accessibility-data:/data
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # MongoDB for Accessibility Data
+  mongodb-accessibility:
+    image: mongo:7
+    container_name: nexus-mongodb-accessibility
+    ports:
+      - "27018:27017"
+    volumes:
+      - ./config/mongodb-accessibility.conf:/etc/mongod.conf
+      - mongodb-accessibility-data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=accessibility
+      - MONGO_INITDB_ROOT_PASSWORD=accessibility123
+      - MONGO_INITDB_DATABASE=accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Prometheus for Accessibility Monitoring
+  prometheus-accessibility:
+    image: prom/prometheus:latest
+    container_name: nexus-prometheus-accessibility
+    ports:
+      - "9096:9090"
+    volumes:
+      - ./config/prometheus-accessibility.yml:/etc/prometheus/prometheus.yml
+      - prometheus-accessibility-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Grafana for Accessibility Visualization
+  grafana-accessibility:
+    image: grafana/grafana:latest
+    container_name: nexus-grafana-accessibility
+    ports:
+      - "3311:3000"
+    volumes:
+      - ./config/grafana-accessibility.ini:/etc/grafana/grafana.ini
+      - ./config/grafana-dashboards:/var/lib/grafana/dashboards
+      - ./config/grafana-provisioning:/etc/grafana/provisioning
+      - grafana-accessibility-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=accessibility123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-worldmap-panel,grafana-piechart-panel
+    depends_on:
+      - prometheus-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # ElasticSearch for Accessibility Analytics
+  elasticsearch-accessibility:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: nexus-elasticsearch-accessibility
+    ports:
+      - "9202:9200"
+      - "9302:9300"
+    volumes:
+      - elasticsearch-accessibility-data:/usr/share/elasticsearch/data
+      - ./config/elasticsearch-accessibility.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+  # Kibana for Accessibility Analytics
+  kibana-accessibility:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: nexus-kibana-accessibility
+    ports:
+      - "5603:5601"
+    volumes:
+      - ./config/kibana-accessibility.yml:/usr/share/kibana/config/kibana.yml
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch-accessibility:9200
+    depends_on:
+      - elasticsearch-accessibility
+    networks:
+      - accessibility-network
+    restart: unless-stopped
+
+volumes:
+  pa11y-data:
+  axe-data:
+  wave-data:
+  lighthouse-data:
+  contrast-data:
+  screen-reader-data:
+  keyboard-nav-data:
+  orchestrator-data:
+  wcag-data:
+  redis-accessibility-data:
+  mongodb-accessibility-data:
+  prometheus-accessibility-data:
+  grafana-accessibility-data:
+  elasticsearch-accessibility-data:
+
+networks:
+  accessibility-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.26.0.0/16
